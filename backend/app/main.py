@@ -119,65 +119,112 @@ class PasswordChange(BaseModel):
 
 @app.post("/api/auth/register", response_model=TokenResponse)
 async def register(user_data: UserCreate, db: Session = Depends(get_db)):
-    if db.query(User).filter(User.username == user_data.username).first():
-        raise HTTPException(status_code=400, detail="Username already exists")
+    """Register a new user"""
+    try:
+        # Check if username exists
+        if db.query(User).filter(User.username == user_data.username).first():
+            raise HTTPException(
+                status_code=400,
+                detail="Username already exists"
+            )
 
-    if db.query(User).filter(User.email == user_data.email).first():
-        raise HTTPException(status_code=400, detail="Email already exists")
+        # Check if email exists
+        if db.query(User).filter(User.email == user_data.email).first():
+            raise HTTPException(
+                status_code=400,
+                detail="Email already exists"
+            )
 
-    new_user = User(
-        username=user_data.username,
-        email=user_data.email,
-        full_name=user_data.full_name,
-        hashed_password=get_password_hash(user_data.password),
-        is_admin=False
-    )
+        # Create new user
+        new_user = User(
+            username=user_data.username,
+            email=user_data.email,
+            full_name=user_data.full_name,
+            hashed_password=get_password_hash(user_data.password),
+            is_admin=False,
+            is_active=True
+        )
 
-    db.add(new_user)
-    db.commit()
-    db.refresh(new_user)
+        db.add(new_user)
+        db.commit()
+        db.refresh(new_user)
 
-    access_token = create_access_token(data={"sub": new_user.username})
+        # Create access token
+        access_token = create_access_token(data={"sub": new_user.username})
 
-    return {
-        "access_token": access_token,
-        "token_type": "bearer",
-        "user": {
-            "id": new_user.id,
-            "username": new_user.username,
-            "email": new_user.email,
-            "full_name": new_user.full_name,
-            "is_admin": new_user.is_admin
+        return {
+            "access_token": access_token,
+            "token_type": "bearer",
+            "user": {
+                "id": new_user.id,
+                "username": new_user.username,
+                "email": new_user.email,
+                "full_name": new_user.full_name,
+                "is_admin": new_user.is_admin
+            }
         }
-    }
+    except HTTPException:
+        raise
+    except Exception as e:
+        db.rollback()
+        print(f"Registration error: {str(e)}")
+        raise HTTPException(
+            status_code=500,
+            detail=f"Registration failed: {str(e)}"
+        )
 
 
 @app.post("/api/auth/login", response_model=TokenResponse)
 async def login(credentials: UserLogin, db: Session = Depends(get_db)):
-    user = db.query(User).filter(User.username == credentials.username).first()
+    """Login user and return JWT token"""
+    try:
+        # Find user by username
+        user = db.query(User).filter(User.username == credentials.username).first()
 
-    if not user or not verify_password(credentials.password, user.hashed_password):
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Incorrect username or password"
-        )
+        if not user:
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="Incorrect username or password",
+                headers={"WWW-Authenticate": "Bearer"}
+            )
 
-    if not user.is_active:
-        raise HTTPException(status_code=403, detail="User account is disabled")
+        # Verify password
+        if not verify_password(credentials.password, user.hashed_password):
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="Incorrect username or password",
+                headers={"WWW-Authenticate": "Bearer"}
+            )
 
-    access_token = create_access_token(data={"sub": user.username})
+        # Check if user is active
+        if not user.is_active:
+            raise HTTPException(
+                status_code=403,
+                detail="User account is disabled"
+            )
 
-    return {
-        "access_token": access_token,
-        "token_type": "bearer",
-        "user": {
-            "id": user.id,
-            "username": user.username,
-            "email": user.email,
-            "full_name": user.full_name,
-            "is_admin": user.is_admin
+        # Create access token
+        access_token = create_access_token(data={"sub": user.username})
+
+        return {
+            "access_token": access_token,
+            "token_type": "bearer",
+            "user": {
+                "id": user.id,
+                "username": user.username,
+                "email": user.email,
+                "full_name": user.full_name,
+                "is_admin": user.is_admin
+            }
         }
-    }
+    except HTTPException:
+        raise
+    except Exception as e:
+        print(f"Login error: {str(e)}")
+        raise HTTPException(
+            status_code=500,
+            detail=f"Login failed: {str(e)}"
+        )
 
 
 @app.get("/api/auth/me")
@@ -533,8 +580,37 @@ async def delete_user(
 # ==================== HEALTH CHECK ====================
 
 @app.get("/api/health")
-async def health_check():
-    return {"status": "healthy", "service": "Company RAG Chat", "version": "2.0"}
+async def health_check(db: Session = Depends(get_db)):
+    """Health check endpoint with database connectivity test"""
+    health_status = {
+        "status": "healthy",
+        "service": "Company RAG Chat",
+        "version": "2.0",
+        "services": {}
+    }
+    
+    # Check database
+    try:
+        db.execute("SELECT 1")
+        health_status["services"]["database"] = "ok"
+    except Exception as e:
+        health_status["services"]["database"] = f"error: {str(e)}"
+        health_status["status"] = "unhealthy"
+    
+    # Check Ollama (optional)
+    try:
+        import os
+        import requests
+        ollama_host = os.getenv("OLLAMA_HOST", "http://ollama:11434")
+        response = requests.get(f"{ollama_host}/api/tags", timeout=2)
+        if response.status_code == 200:
+            health_status["services"]["ollama"] = "ok"
+        else:
+            health_status["services"]["ollama"] = "unreachable"
+    except:
+        health_status["services"]["ollama"] = "unreachable"
+    
+    return health_status
 
 
 # ==================== KNOWLEDGE GRAPH ENDPOINTS ====================
