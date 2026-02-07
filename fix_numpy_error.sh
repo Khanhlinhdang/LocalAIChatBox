@@ -1,12 +1,12 @@
 #!/bin/bash
 
-# 🚀 Script tự động fix NumPy error trên VPS
+# 🚀 Script tự động fix NumPy & Bcrypt compatibility errors trên VPS
 # Chạy script này trên VPS Ubuntu
 
 set -e  # Exit on error
 
 echo "=================================================="
-echo "🔧 FIX NUMPY COMPATIBILITY ERROR"
+echo "🔧 FIX NUMPY & BCRYPT COMPATIBILITY ERRORS"
 echo "=================================================="
 echo ""
 
@@ -109,6 +109,23 @@ else
 fi
 echo ""
 
+# Check bcrypt version
+echo -e "${YELLOW}Checking bcrypt version in container...${NC}"
+BCRYPT_VERSION=$(docker-compose exec -T backend pip show bcrypt 2>/dev/null | grep "Version:" | awk '{print $2}')
+if [ -z "$BCRYPT_VERSION" ]; then
+    echo -e "${RED}❌ Could not get bcrypt version${NC}"
+else
+    echo "bcrypt version: $BCRYPT_VERSION"
+    if [ "$BCRYPT_VERSION" = "3.2.2" ]; then
+        echo -e "${GREEN}✓ bcrypt version is correct (3.2.2)${NC}"
+    elif [[ "$BCRYPT_VERSION" == 3.* ]]; then
+        echo -e "${GREEN}✓ bcrypt version is 3.x (compatible)${NC}"
+    else
+        echo -e "${YELLOW}⚠️  bcrypt version is $BCRYPT_VERSION (may have issues)${NC}"
+    fi
+fi
+echo ""
+
 # Check backend logs for errors
 echo -e "${YELLOW}Checking backend logs for errors...${NC}"
 LOGS=$(docker-compose logs backend --tail=30 2>&1)
@@ -116,17 +133,19 @@ LOGS=$(docker-compose logs backend --tail=30 2>&1)
 if echo "$LOGS" | grep -q "np.float_"; then
     echo -e "${RED}❌ NumPy error still present in logs!${NC}"
     echo "Please check logs manually: docker-compose logs backend"
-    echo ""
-    echo "If error persists, try:"
-    echo "  docker-compose down -v"
-    echo "  docker system prune -a"
-    echo "  docker-compose build --no-cache"
-    echo "  docker-compose up -d"
+elif echo "$LOGS" | grep -q "__about__"; then
+    echo -e "${RED}❌ bcrypt compatibility error still present!${NC}"
+    echo "Please check logs manually: docker-compose logs backend"
 elif echo "$LOGS" | grep -q "Uvicorn running"; then
     echo -e "${GREEN}✓ Backend started successfully!${NC}"
 else
     echo -e "${YELLOW}⚠️  Backend may still be starting...${NC}"
     echo "Check logs manually: docker-compose logs backend -f"
+fi
+
+if echo "$LOGS" | grep -q "ERROR"; then
+    echo -e "${RED}⚠️  Errors detected in logs${NC}"
+    echo "Run: docker-compose logs backend --tail=50"
 fi
 echo ""
 

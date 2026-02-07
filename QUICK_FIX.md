@@ -1,17 +1,29 @@
-# 🚨 QUICK FIX - NumPy 2.0 Compatibility Error
+# 🚨 QUICK FIX - Bcrypt & NumPy Compatibility Errors
 
-## ❌ Lỗi gặp phải:
+## ❌ Các lỗi đã gặp:
+
+### 1. NumPy 2.0 Error:
 ```
 AttributeError: `np.float_` was removed in the NumPy 2.0 release
 ```
 
-**Nguyên nhân:** ChromaDB 0.4.22 không hỗ trợ NumPy 2.0
+### 2. Bcrypt Error:
+```
+AttributeError: module 'bcrypt' has no attribute '__about__'
+ValueError: password cannot be longer than 72 bytes
+```
+
+## 🔍 Nguyên nhân:
+
+1. **NumPy 2.0**: ChromaDB 0.4.22 không hỗ trợ NumPy 2.0
+2. **Bcrypt 4.x**: passlib 1.7.4 không tương thích với bcrypt 4.0+ (đã thay đổi API)
 
 ## ✅ Giải pháp:
+
 - **Nâng cấp ChromaDB** lên version **0.5.3** (hỗ trợ NumPy 2.0)
-- Pin NumPy về **1.26.4** (stable version)
-- Code đã được cập nhật và test với ChromaDB 0.5.3
-- **Removed local-deep-research dependency** (không còn cần thiết)
+- Pin **NumPy 1.26.4** (stable version)
+- Pin **bcrypt 3.2.2** (tương thích với passlib 1.7.4)
+- **Removed local-deep-research dependency**
 
 > 📘 **Lưu ý:** Deep Research feature đã bị disable. Xem [REMOVED_LDR.md](REMOVED_LDR.md) để biết chi tiết.
 
@@ -66,10 +78,11 @@ ragchat-backend  | Deep Research features will be disabled.
 ragchat-backend  | Created new ChromaDB collection
 ragchat-backend  | Database tables created
 ragchat-backend  | Default admin user created (admin / admin123)
-ragchat-backend  | Warning: Deep Research Service init failed (non-fatal): ...
 ragchat-backend  | Company RAG Chat Server Started
 ragchat-backend  | INFO:     Uvicorn running on http://0.0.0.0:8000
 ```
+
+**✓ KHÔNG có error về bcrypt hay NumPy!**
 
 **NOTE:** Warning về Deep Research là bình thường! App vẫn hoạt động đầy đủ (RAG, Auth, Chat).
 
