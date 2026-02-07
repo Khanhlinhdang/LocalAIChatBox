@@ -1,4 +1,4 @@
-# 🚨 QUICK FIX - Bcrypt & NumPy Compatibility Errors
+# 🚨 QUICK FIX - Common Deployment Errors
 
 ## ❌ Các lỗi đã gặp:
 
@@ -18,14 +18,28 @@ ValueError: password cannot be longer than 72 bytes
 failed to solve: process "/bin/sh -c pip install..." did not complete successfully
 ```
 
+### 4. Disk Space Error:
+```
+ERROR: Could not install packages due to an OSError: [Errno 28] No space left on device
+```
+
 ## 🔍 Nguyên nhân:
 
 1. **NumPy 2.0**: ChromaDB 0.4.22 không hỗ trợ NumPy 2.0
 2. **Bcrypt 4.x**: passlib 1.7.4 không tương thích với bcrypt 4.0+ (đã thay đổi API)
 3. **ChromaDB 0.5.3**: Version này không tồn tại trên PyPI
+4. **Disk full**: Docker build cache và old images chiếm hết disk space
 
 ## ✅ Giải pháp:
 
+### A. Nếu gặp DISK SPACE ERROR (No space left):
+```bash
+# Chạy script cleanup (giải phóng 5-15 GB)
+bash cleanup_docker.sh
+```
+📖 Chi tiết: [FIX_DISK_SPACE.md](FIX_DISK_SPACE.md)
+
+### B. Dependency fixes:
 - **ChromaDB**: Dùng version **0.4.22** (stable, đã test)
 - **NumPy**: Pin **<2.0** để tránh NumPy 2.0 error
 - **passlib**: Version **1.7.4** không có `[bcrypt]` extra
