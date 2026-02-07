@@ -11,6 +11,9 @@ AttributeError: `np.float_` was removed in the NumPy 2.0 release
 - **Nâng cấp ChromaDB** lên version **0.5.3** (hỗ trợ NumPy 2.0)
 - Pin NumPy về **1.26.4** (stable version)
 - Code đã được cập nhật và test với ChromaDB 0.5.3
+- **Removed local-deep-research dependency** (không còn cần thiết)
+
+> 📘 **Lưu ý:** Deep Research feature đã bị disable. Xem [REMOVED_LDR.md](REMOVED_LDR.md) để biết chi tiết.
 
 ## 🔧 Làm ngay trên VPS:
 
@@ -58,12 +61,17 @@ docker-compose logs backend --tail=50 -f
 ## ✓ Expected logs (thành công):
 
 ```
+ragchat-backend  | WARNING: local-deep-research package not installed
+ragchat-backend  | Deep Research features will be disabled.
 ragchat-backend  | Created new ChromaDB collection
 ragchat-backend  | Database tables created
 ragchat-backend  | Default admin user created (admin / admin123)
+ragchat-backend  | Warning: Deep Research Service init failed (non-fatal): ...
 ragchat-backend  | Company RAG Chat Server Started
 ragchat-backend  | INFO:     Uvicorn running on http://0.0.0.0:8000
 ```
+
+**NOTE:** Warning về Deep Research là bình thường! App vẫn hoạt động đầy đủ (RAG, Auth, Chat).
 
 ## 🎯 Sau khi fix:
 
