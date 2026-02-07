@@ -13,7 +13,9 @@ search:
   default_lang: "en"
 
 ui:
-  static_use_hash: true
+  default_locale: "vi"
+  theme_args:
+    simple_style: dark
 
 outgoing:
   request_timeout: 10.0

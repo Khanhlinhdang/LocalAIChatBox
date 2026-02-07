@@ -181,7 +181,7 @@ Các máy trong cùng mạng LAN truy cập: `http://192.168.1.100`
 Mở **PowerShell** hoặc **Command Prompt**:
 
 ```powershell
-git clone https://github.com/your-username/LocalAIChatBox.git
+git clone https://github.com/Khanhlinhdang/LocalAIChatBox.git
 cd LocalAIChatBox
 ```
 

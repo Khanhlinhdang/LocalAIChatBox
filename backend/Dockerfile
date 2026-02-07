@@ -6,7 +6,6 @@ WORKDIR /build
 # Install build dependencies
 RUN apt-get update && apt-get install -y --no-install-recommends \
     build-essential \
-    libsqlcipher-dev \
     libffi-dev \
     git \
     && rm -rf /var/lib/apt/lists/*
@@ -30,7 +29,6 @@ WORKDIR /app
 
 # Install runtime dependencies only
 RUN apt-get update && apt-get install -y --no-install-recommends \
-    libsqlcipher0 \
     libffi8 \
     curl \
     && rm -rf /var/lib/apt/lists/* \
@@ -55,7 +53,6 @@ ENV PYTHONUNBUFFERED=1 \
 
 # Copy backend application code
 COPY backend/app /app/app
-COPY backend/.env /app/.env 2>/dev/null || true
 
 # Create data directories with proper permissions
 RUN mkdir -p /app/data/documents /app/data/vector_store && \
