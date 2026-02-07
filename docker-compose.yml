@@ -66,7 +66,7 @@ services:
       - ./data/documents:/app/data/documents
       - sentence_transformer_cache:/home/appuser/.cache/torch/sentence_transformers
     ports:
-      - "8000:8000"
+      - "8001:8000"
     depends_on:
       postgres:
         condition: service_healthy
