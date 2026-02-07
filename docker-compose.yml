@@ -1,5 +1,7 @@
 services:
-  # ==================== PostgreSQL ====================
+  # ============================================================
+  #  1. PostgreSQL - Database
+  # ============================================================
   postgres:
     image: postgres:16-alpine
     container_name: ragchat-postgres
@@ -14,11 +16,14 @@ services:
     restart: unless-stopped
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U raguser -d ragdb"]
-      interval: 10s
-      timeout: 5s
-      retries: 5
+      interval: 5s
+      timeout: 3s
+      retries: 10
+      start_period: 10s
 
-  # ==================== Ollama ====================
+  # ============================================================
+  #  2. Ollama - LLM Runtime
+  # ============================================================
   ollama:
     image: ollama/ollama:latest
     container_name: ragchat-ollama
@@ -27,7 +32,13 @@ services:
     ports:
       - "11434:11434"
     restart: unless-stopped
-    # Uncomment the following for GPU support:
+    healthcheck:
+      test: ["CMD-SHELL", "curl -sf http://localhost:11434/ || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 15s
+    # Uncomment for GPU support:
     # deploy:
     #   resources:
     #     reservations:
@@ -36,7 +47,82 @@ services:
     #           count: all
     #           capabilities: [gpu]
 
-  # ==================== SearXNG (Meta Search Engine) ====================
+  # ============================================================
+  #  3. Ollama Model Init - Auto-pull models then exit
+  #     Runs once, pulls llama3.1 + llava, then stops.
+  #     Backend waits for this to complete before starting.
+  # ============================================================
+  ollama-init:
+    image: curlimages/curl:latest
+    container_name: ragchat-ollama-init
+    depends_on:
+      ollama:
+        condition: service_healthy
+    environment:
+      - OLLAMA_HOST=http://ollama:11434
+      - OLLAMA_MODELS=llama3.1 llava
+    entrypoint: ["/bin/sh", "-c"]
+    command:
+      - |
+        echo "=== Ollama Model Initializer ==="
+        echo "Host: $$OLLAMA_HOST"
+        echo "Models: $$OLLAMA_MODELS"
+
+        for MODEL in $$OLLAMA_MODELS; do
+          echo ""
+          echo "--- Checking model: $$MODEL ---"
+
+          # Check if already pulled
+          if curl -sf "$$OLLAMA_HOST/api/tags" 2>/dev/null | grep -q "\"$$MODEL"; then
+            echo "Model $$MODEL already exists, skipping."
+          else
+            echo "Pulling $$MODEL (this may take several minutes)..."
+            curl -sf "$$OLLAMA_HOST/api/pull" \
+              -d "{\"name\": \"$$MODEL\", \"stream\": false}" \
+              --max-time 3600 && echo "✓ $$MODEL pulled!" || {
+                echo "Retry pulling $$MODEL..."
+                sleep 5
+                curl -sf "$$OLLAMA_HOST/api/pull" \
+                  -d "{\"name\": \"$$MODEL\", \"stream\": false}" \
+                  --max-time 3600 && echo "✓ $$MODEL pulled on retry!" || echo "✗ Failed to pull $$MODEL"
+              }
+          fi
+        done
+
+        echo ""
+        echo "=== Final model list ==="
+        curl -sf "$$OLLAMA_HOST/api/tags" 2>/dev/null || true
+        echo ""
+        echo "=== Model init complete! ==="
+    restart: "no"
+
+  # ============================================================
+  #  4. Data Init - Fix permissions on host-mounted volumes
+  #     Ensures uid 1000 (appuser) can write to data dirs.
+  # ============================================================
+  data-init:
+    image: alpine:latest
+    container_name: ragchat-data-init
+    volumes:
+      - ./data/vector_store:/data/vector_store
+      - ./data/documents:/data/documents
+      - ./data/parser_output:/data/parser_output
+    entrypoint: ["/bin/sh", "-c"]
+    command:
+      - |
+        echo "=== Data Directory Initializer ==="
+        for dir in /data/vector_store /data/documents /data/parser_output; do
+          mkdir -p "$$dir"
+          chown -R 1000:1000 "$$dir"
+          chmod -R 755 "$$dir"
+          echo "  ✓ $$dir (uid=1000)"
+        done
+        echo "=== Permissions set! ==="
+    restart: "no"
+
+  # ============================================================
+  #  5. SearXNG - Meta Search Engine
+  # ============================================================
   searxng:
     image: searxng/searxng:latest
     container_name: ragchat-searxng
@@ -45,8 +131,18 @@ services:
     ports:
       - "8080:8080"
     restart: unless-stopped
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://localhost:8080/ > /dev/null 2>&1 || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 6
+      start_period: 10s
 
-  # ==================== Backend (FastAPI + LDR) ====================
+  # ============================================================
+  #  6. Backend - FastAPI + Multimodal RAG
+  #     Waits for: postgres (healthy), ollama-init (models pulled),
+  #     data-init (permissions), searxng (healthy)
+  # ============================================================
   backend:
     build:
       context: .
@@ -58,11 +154,12 @@ services:
     environment:
       - DATABASE_URL=postgresql://raguser:ragpassword@postgres:5432/ragdb
       - OLLAMA_HOST=http://ollama:11434
+      - OLLAMA_LLM_MODEL=llama3.1
+      - OLLAMA_VISION_MODEL=llava
       - VECTOR_STORE_PATH=/app/data/vector_store
       - DOCUMENTS_PATH=/app/data/documents
-      - SEARXNG_URL=http://searxng:8080
       - PARSER_OUTPUT_DIR=/app/data/parser_output
-      - OLLAMA_VISION_MODEL=llava
+      - SEARXNG_URL=http://searxng:8080
     volumes:
       - ./data/vector_store:/app/data/vector_store
       - ./data/documents:/app/data/documents
@@ -74,12 +171,24 @@ services:
       postgres:
         condition: service_healthy
       ollama:
-        condition: service_started
+        condition: service_healthy
+      ollama-init:
+        condition: service_completed_successfully
+      data-init:
+        condition: service_completed_successfully
       searxng:
         condition: service_started
     restart: unless-stopped
+    healthcheck:
+      test: ["CMD-SHELL", "curl -sf http://localhost:8000/api/health || exit 1"]
+      interval: 15s
+      timeout: 10s
+      retries: 5
+      start_period: 30s
 
-  # ==================== Frontend (React) ====================
+  # ============================================================
+  #  7. Frontend - React
+  # ============================================================
   frontend:
     build:
       context: ./frontend
@@ -88,10 +197,20 @@ services:
     ports:
       - "3000:3000"
     depends_on:
-      - backend
+      backend:
+        condition: service_healthy
     restart: unless-stopped
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://localhost:3000/ > /dev/null 2>&1 || exit 1"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
 
-  # ==================== Nginx Reverse Proxy ====================
+  # ============================================================
+  #  8. Nginx Reverse Proxy
+  #     Only starts when both backend & frontend are healthy
+  # ============================================================
   nginx:
     image: nginx:alpine
     container_name: ragchat-nginx
@@ -100,9 +219,17 @@ services:
     volumes:
       - ./nginx/nginx.conf:/etc/nginx/conf.d/default.conf:ro
     depends_on:
-      - backend
-      - frontend
+      backend:
+        condition: service_healthy
+      frontend:
+        condition: service_healthy
     restart: unless-stopped
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://localhost:80/ > /dev/null 2>&1 || exit 1"]
+      interval: 15s
+      timeout: 5s
+      retries: 3
+      start_period: 5s
 
 volumes:
   postgres_data:
