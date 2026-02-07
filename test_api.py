@@ -31,11 +31,38 @@ def print_test(name, status, details=""):
     if details:
         print(f"  {YELLOW}→{RESET} {details}")
 
+def check_backend_reachable():
+    """Quick check if backend is reachable at all"""
+    print(f"{YELLOW}Kiểm tra kết nối đến VPS...{RESET}")
+    try:
+        # Try a simple GET to root
+        response = requests.get(BASE_URL, timeout=10)
+        print(f"{GREEN}✓ Frontend đang chạy (HTTP {response.status_code}){RESET}")
+        return True
+    except requests.exceptions.Timeout:
+        print(f"{RED}✗ Timeout: Không kết nối được đến {BASE_URL}{RESET}")
+        print(f"{YELLOW}Kiểm tra:{RESET}")
+        print(f"  1. VPS có đang chạy không?")
+        print(f"  2. Port 81 có mở không? (firewall)")
+        print(f"  3. Docker containers có đang chạy? docker-compose ps")
+        return False
+    except requests.exceptions.ConnectionError:
+        print(f"{RED}✗ Connection Error: Không thể kết nối đến VPS{RESET}") 
+        print(f"{YELLOW}Kiểm tra:{RESET}")
+        print(f"  1. IP và port đúng không? {BASE_URL}")
+        print(f"  2. VPS có đang chạy?")
+        print(f"  3. Firewall có block port 81?")
+        return False
+    except Exception as e:
+        print(f"{RED}✗ Error: {str(e)}{RESET}")
+        return False
+
 def test_health_check():
     """Test health check endpoint"""
     print_header("1. Testing Health Check")
     try:
-        response = requests.get(f"{API_BASE}/health", timeout=5)
+        print(f"Connecting to: {API_BASE}/health")
+        response = requests.get(f"{API_BASE}/health", timeout=30)
         print(f"Status Code: {response.status_code}")
         
         if response.status_code == 200:
@@ -54,6 +81,9 @@ def test_health_check():
         else:
             print_test("Health Check", False, f"Status code: {response.status_code}")
             return False
+    except requests.exceptions.Timeout as e:
+        print_test("Health Check", False, "Timeout: Backend không phản hồi (>30s). Kiểm tra: docker-compose ps backend")
+        return False
     except requests.exceptions.RequestException as e:
         print_test("Health Check", False, f"Connection error: {str(e)}")
         return False
@@ -73,7 +103,7 @@ def test_register(username, email, password):
         response = requests.post(
             f"{API_BASE}/auth/register",
             json=payload,
-            timeout=10
+            timeout=30
         )
         
         print(f"Status Code: {response.status_code}")
@@ -89,6 +119,9 @@ def test_register(username, email, password):
         else:
             print_test("User Registration", False, f"Unexpected status: {response.status_code}")
             return None, None
+    except requests.exceptions.Timeout:
+        print_test("User Registration", False, "Timeout: Backend quá chậm")
+        return None, None
     except requests.exceptions.RequestException as e:
         print_test("User Registration", False, f"Connection error: {str(e)}")
         return None, None
@@ -106,7 +139,7 @@ def test_login(username, password):
         response = requests.post(
             f"{API_BASE}/auth/login",
             json=payload,
-            timeout=10
+            timeout=30
         )
         
         print(f"Status Code: {response.status_code}")
@@ -122,6 +155,9 @@ def test_login(username, password):
         else:
             print_test("User Login", False, f"Status: {response.status_code}, Response: {response.text}")
             return None, None
+    except requests.exceptions.Timeout:
+        print_test("User Login", False, "Timeout: Backend quá chậm")
+        return None, None
     except requests.exceptions.RequestException as e:
         print_test("User Login", False, f"Connection error: {str(e)}")
         return None, None
@@ -137,7 +173,7 @@ def test_get_me(token):
         response = requests.get(
             f"{API_BASE}/auth/me",
             headers=headers,
-            timeout=10
+            timeout=30
         )
         
         print(f"Status Code: {response.status_code}")
@@ -150,6 +186,9 @@ def test_get_me(token):
         else:
             print_test("Get Current User", False, f"Status: {response.status_code}")
             return False
+    except requests.exceptions.Timeout:
+        print_test("Get Current User", False, "Timeout")
+        return False
     except requests.exceptions.RequestException as e:
         print_test("Get Current User", False, f"Connection error: {str(e)}")
         return False
@@ -164,16 +203,21 @@ def test_nginx_proxy():
     print_header("0. Testing Nginx Proxy")
     try:
         # Test root endpoint
-        response = requests.get(BASE_URL, timeout=5)
+        print(f"Testing frontend: {BASE_URL}")
+        response = requests.get(BASE_URL, timeout=15)
         print(f"Frontend Status Code: {response.status_code}")
         print_test("Frontend Accessible", response.status_code in [200, 304], f"Status: {response.status_code}")
         
         # Test API proxy
-        response = requests.get(f"{BASE_URL}/api/health", timeout=5)
+        print(f"\nTesting API proxy: {BASE_URL}/api/health")
+        response = requests.get(f"{BASE_URL}/api/health", timeout=30)
         print(f"API Proxy Status Code: {response.status_code}")
         print_test("API Proxy", response.status_code == 200, f"Status: {response.status_code}")
         
         return response.status_code == 200
+    except requests.exceptions.Timeout as e:
+        print_test("Nginx Proxy", False, f"Timeout error: Backend is too slow or not responding. Try: docker-compose restart backend")
+        return False
     except requests.exceptions.RequestException as e:
         print_test("Nginx Proxy", False, f"Connection error: {str(e)}")
         return False
@@ -184,7 +228,14 @@ def run_all_tests():
     print(f"{BLUE}║{' '*15}LocalAIChatBox API Test Suite{' '*15}║{RESET}")
     print(f"{BLUE}║{' '*20}VPS: 194.59.165.202:81{' '*20}║{RESET}")
     print(f"{BLUE}║{' '*16}Time: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}{' '*17}║{RESET}")
-    print(f"{BLUE}╚{'═'*58}╝{RESET}")
+    print(f"{BLUE}╚{'═'*58}╝{RESET}\n")
+    
+    # Pre-check: Can we reach the server at all?
+    if not check_backend_reachable():
+        print(f"\n{RED}❌ Không thể kết nối đến VPS. Dừng test.{RESET}")
+        return False
+    
+    print(f"\n{GREEN}✓ VPS có thể truy cập được. Bắt đầu test API...{RESET}\n")
     
     results = {}
     
@@ -195,8 +246,14 @@ def run_all_tests():
     results['health'] = test_health_check()
     
     if not results['health']:
-        print(f"\n{RED}⚠️  Health check failed! Backend may not be running.{RESET}")
-        print(f"{YELLOW}Run on VPS: docker-compose logs backend --tail=50{RESET}")
+        print(f"\n{RED}⚠️  Health check failed! Backend có thể không chạy hoặc quá chậm.{RESET}")
+        print(f"\n{YELLOW}Các bước kiểm tra trên VPS:{RESET}")
+        print(f"  1. SSH: ssh root@194.59.165.202")
+        print(f"  2. Vào thư mục: cd ~/LocalAIChatBox")
+        print(f"  3. Xem containers: docker-compose ps")
+        print(f"  4. Xem logs backend: docker-compose logs backend --tail=100")
+        print(f"  5. Test local: curl http://localhost:8001/api/health")
+        print(f"  6. Restart nếu cần: docker-compose restart backend")
         return False
     
     # Test 2 & 3: Register and Login
@@ -237,14 +294,34 @@ def run_all_tests():
     
     if passed_tests == total_tests:
         print(f"{GREEN}✓ All tests passed! API is working correctly.{RESET}")
+        print(f"\n{GREEN}🎉 Bạn có thể truy cập frontend và đăng nhập:{RESET}")
+        print(f"   👉 http://194.59.165.202:81")
+        print(f"   Username: admin")
+        print(f"   Password: admin123")
         return True
     else:
         print(f"\n{RED}✗ Some tests failed. Check the details above.{RESET}")
-        print(f"\n{YELLOW}Troubleshooting steps:{RESET}")
-        print(f"1. SSH to VPS: ssh root@194.59.165.202")
-        print(f"2. Check backend logs: docker-compose logs backend --tail=100")
-        print(f"3. Check database: docker-compose ps postgres")
-        print(f"4. Restart backend: docker-compose restart backend")
+        print(f"\n{YELLOW}📋 Troubleshooting Steps:{RESET}")
+        print(f"\n{BLUE}Bước 1: SSH vào VPS{RESET}")
+        print(f"  ssh root@194.59.165.202")
+        print(f"\n{BLUE}Bước 2: Kiểm tra containers{RESET}")
+        print(f"  cd ~/LocalAIChatBox")
+        print(f"  docker-compose ps")
+        print(f"\n{BLUE}Bước 3: Xem logs chi tiết{RESET}")
+        print(f"  docker-compose logs backend --tail=100")
+        print(f"  docker-compose logs nginx --tail=50")
+        print(f"  docker-compose logs postgres --tail=30")
+        print(f"\n{BLUE}Bước 4: Test trực tiếp trên VPS{RESET}")
+        print(f"  curl http://localhost:8001/api/health")
+        print(f"  curl http://localhost:81/api/health")
+        print(f"\n{BLUE}Bước 5: Restart nếu cần{RESET}")
+        print(f"  docker-compose restart backend")
+        print(f"  # Hoặc rebuild: docker-compose build backend && docker-compose up -d backend")
+        print(f"\n{YELLOW}💡 Lỗi thường gặp:{RESET}")
+        print(f"  • Backend timeout → Check logs, có thể thiếu dependencies")
+        print(f"  • Database error → Restart postgres: docker-compose restart postgres")
+        print(f"  • 500 error → Check backend logs có Python errors")
+        print(f"  • Nginx 502 → Backend chưa sẵn sàng, đợi thêm 30s")
         return False
 
 if __name__ == "__main__":
