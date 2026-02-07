@@ -8,6 +8,9 @@ from sqlalchemy.orm import Session
 from app.database import get_db
 from app.models import User
 import os
+import logging
+
+logger = logging.getLogger(__name__)
 
 SECRET_KEY = os.getenv("SECRET_KEY", "your-secret-key-change-this")
 ALGORITHM = os.getenv("ALGORITHM", "HS256")
@@ -94,3 +97,66 @@ async def get_current_admin(
             detail="Admin privileges required"
         )
     return current_user
+
+
+def authenticate_with_ldap(username: str, password: str, db: Session) -> Optional[User]:
+    """
+    Try LDAP authentication. If successful, auto-create or update local user.
+    Returns User on success, None if LDAP unavailable or auth fails.
+    """
+    try:
+        from app.ldap_auth import get_ldap_service
+        from app.rbac import RBACService
+
+        ldap_svc = get_ldap_service()
+        if not ldap_svc.available:
+            return None
+
+        ldap_info = ldap_svc.authenticate(username, password)
+        if not ldap_info:
+            return None
+
+        # Find or create local user
+        user = db.query(User).filter(User.username == username).first()
+        if user:
+            # Update existing user with LDAP info
+            user.email = ldap_info.get("email") or user.email
+            user.full_name = ldap_info.get("full_name") or user.full_name
+            user.ldap_dn = ldap_info.get("dn")
+            user.auth_provider = "ldap"
+            if ldap_info.get("is_admin"):
+                user.is_admin = True
+            db.commit()
+        else:
+            if not ldap_svc.config.auto_create_users:
+                logger.info(f"LDAP user {username} not auto-created (disabled)")
+                return None
+
+            # Auto-create user from LDAP
+            user = User(
+                username=username,
+                email=ldap_info.get("email") or f"{username}@ldap.local",
+                full_name=ldap_info.get("full_name") or username,
+                hashed_password=get_password_hash("ldap-managed-no-local-password"),
+                is_admin=ldap_info.get("is_admin", False),
+                auth_provider="ldap",
+                ldap_dn=ldap_info.get("dn"),
+            )
+            db.add(user)
+            db.commit()
+            db.refresh(user)
+
+            # Assign default role
+            default_role = ldap_info.get("default_role", "editor")
+            try:
+                RBACService.assign_role_to_user(db, user.id, default_role, user.id)
+            except Exception as e:
+                logger.warning(f"Could not assign default role to LDAP user: {e}")
+
+            logger.info(f"Auto-created LDAP user: {username}")
+
+        return user
+
+    except Exception as e:
+        logger.error(f"LDAP authentication error: {e}")
+        return None

@@ -32,6 +32,7 @@ from app.auth import (
 from app.enhanced_rag_engine import get_rag_engine
 from app.knowledge_graph import get_kg_engine
 from app.research_routes import router as research_router
+from app.enterprise_routes import router as enterprise_router
 from app.analytics import (
     log_usage, get_usage_overview, get_daily_activity,
     get_top_users, get_popular_queries, get_document_stats,
@@ -61,6 +62,9 @@ app.add_middleware(
 # Mount research router
 app.include_router(research_router)
 
+# Mount enterprise router
+app.include_router(enterprise_router, prefix="/api/enterprise", tags=["Enterprise"])
+
 
 @app.on_event("startup")
 async def startup_event():
@@ -75,13 +79,54 @@ async def startup_event():
                 email="admin@company.local",
                 full_name="Administrator",
                 hashed_password=get_password_hash("admin123"),
-                is_admin=True
+                is_admin=True,
+                auth_provider="local"
             )
             db.add(admin)
             db.commit()
             print("Default admin user created (admin / admin123)")
+
+        # Initialize RBAC default roles
+        try:
+            from app.rbac import RBACService
+            RBACService.initialize_default_roles(db)
+            print("RBAC default roles initialized")
+        except Exception as e:
+            print(f"Warning: RBAC init failed (non-fatal): {e}")
+
+        # Assign admin role to admin user
+        try:
+            from app.rbac import RBACService
+            admin_user = db.query(User).filter(User.username == "admin").first()
+            if admin_user:
+                RBACService.assign_role_to_user(db, admin_user.id, "admin", admin_user.id)
+        except Exception:
+            pass
+
     finally:
         db.close()
+
+    # Initialize encryption service
+    try:
+        from app.encryption import get_encryption_service
+        enc = get_encryption_service()
+        if enc.enabled:
+            print("Encryption at rest: ENABLED")
+        else:
+            print("Encryption at rest: DISABLED (set ENCRYPTION_KEY to enable)")
+    except Exception as e:
+        print(f"Warning: Encryption service init failed (non-fatal): {e}")
+
+    # Initialize LDAP service
+    try:
+        from app.ldap_auth import get_ldap_service
+        ldap = get_ldap_service()
+        if ldap.available:
+            print("LDAP/AD Authentication: ENABLED")
+        else:
+            print("LDAP/AD Authentication: DISABLED")
+    except Exception as e:
+        print(f"Warning: LDAP service init failed (non-fatal): {e}")
 
     # Initialize deep research service
     try:
@@ -101,7 +146,7 @@ async def startup_event():
     except Exception as e:
         print(f"Warning: Enhanced RAG Engine init failed (non-fatal): {e}")
 
-    print("LocalAIChatBox Server Started (v3.0 - Multimodal RAG)")
+    print("LocalAIChatBox Server Started (v4.0 - Enterprise Edition)")
 
 
 # ==================== SCHEMAS ====================
@@ -240,38 +285,90 @@ async def register(user_data: UserCreate, db: Session = Depends(get_db)):
 
 @app.post("/api/auth/login", response_model=TokenResponse)
 async def login(credentials: UserLogin, db: Session = Depends(get_db)):
-    """Login user and return JWT token"""
+    """Login user and return JWT token (supports local + LDAP)"""
     try:
-        user = db.query(User).filter(User.username == credentials.username).first()
+        user = None
+
+        # Try LDAP authentication first
+        try:
+            from app.auth import authenticate_with_ldap
+            user = authenticate_with_ldap(credentials.username, credentials.password, db)
+        except Exception:
+            pass
+
+        # Fallback to local authentication
         if not user:
-            raise HTTPException(
-                status_code=status.HTTP_401_UNAUTHORIZED,
-                detail="Incorrect username or password",
-                headers={"WWW-Authenticate": "Bearer"}
-            )
-        if not verify_password(credentials.password, user.hashed_password):
-            raise HTTPException(
-                status_code=status.HTTP_401_UNAUTHORIZED,
-                detail="Incorrect username or password",
-                headers={"WWW-Authenticate": "Bearer"}
-            )
+            user = db.query(User).filter(User.username == credentials.username).first()
+            if not user:
+                raise HTTPException(
+                    status_code=status.HTTP_401_UNAUTHORIZED,
+                    detail="Incorrect username or password",
+                    headers={"WWW-Authenticate": "Bearer"}
+                )
+            if not verify_password(credentials.password, user.hashed_password):
+                raise HTTPException(
+                    status_code=status.HTTP_401_UNAUTHORIZED,
+                    detail="Incorrect username or password",
+                    headers={"WWW-Authenticate": "Bearer"}
+                )
+
         if not user.is_active:
             raise HTTPException(status_code=403, detail="User account is disabled")
 
         access_token = create_access_token(data={"sub": user.username})
         log_usage(db, user.id, "login", "auth")
+
+        # Log audit
+        try:
+            from app.compliance import get_compliance_service
+            get_compliance_service().log_action(db, user.id, "login", "auth")
+        except Exception:
+            pass
+
         return {
+            "access_token": access_token,
+            "token_type": "bearer",
+            "user": {
+                "id": user.id,
+                "username": user.username,
+                "email": user.email,
+                "full_name": user.full_name,
+                "is_admin": user.is_admin
+            }
+        }
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Login failed: {str(e)}")
 
 
 @app.get("/api/auth/me")
-async def get_me(current_user: User = Depends(get_current_user)):
-    return {
+async def get_me(current_user: User = Depends(get_current_user), db: Session = Depends(get_db)):
+    user_data = {
         "id": current_user.id,
         "username": current_user.username,
         "email": current_user.email,
         "full_name": current_user.full_name,
-        "is_admin": current_user.is_admin
+        "is_admin": current_user.is_admin,
+        "auth_provider": getattr(current_user, 'auth_provider', 'local'),
+        "tenant_id": getattr(current_user, 'tenant_id', None),
     }
+    # Add roles and permissions
+    try:
+        from app.rbac import RBACService
+        from app.models import UserRole, Role
+        user_roles = db.query(UserRole).filter(UserRole.user_id == current_user.id).all()
+        roles = []
+        for ur in user_roles:
+            role = db.query(Role).filter(Role.id == ur.role_id).first()
+            if role:
+                roles.append(role.name)
+        user_data["roles"] = roles
+        user_data["permissions"] = sorted(list(RBACService.get_user_permissions(db, current_user)))
+    except Exception:
+        user_data["roles"] = []
+        user_data["permissions"] = []
+    return user_data
 
 
 @app.put("/api/auth/password")

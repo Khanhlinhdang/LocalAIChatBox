@@ -34,6 +34,9 @@ function Navbar({ user, onLogout }) {
             <Link to="/admin" className={location.pathname === '/admin' ? 'active' : ''}>
               Admin
             </Link>
+            <Link to="/enterprise" className={location.pathname === '/enterprise' ? 'active' : ''}>
+              Enterprise
+            </Link>
             <Link to="/settings" className={location.pathname === '/settings' ? 'active' : ''}>
               Settings
             </Link>

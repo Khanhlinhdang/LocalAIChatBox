@@ -264,4 +264,98 @@ export const getLDRSettings = () =>
 export const updateLDRSettings = (settings) =>
   api.put('/settings/ldr', { settings });
 
+// ==================== ENTERPRISE / PHASE 4 ====================
+
+// Enterprise Dashboard
+export const getEnterpriseDashboard = () =>
+  api.get('/enterprise/dashboard');
+
+// Roles
+export const listRoles = () =>
+  api.get('/enterprise/roles');
+
+export const createRole = (name, description, permissions) =>
+  api.post('/enterprise/roles', { name, description, permissions });
+
+export const updateRole = (roleId, data) =>
+  api.put(`/enterprise/roles/${roleId}`, data);
+
+export const deleteRole = (roleId) =>
+  api.delete(`/enterprise/roles/${roleId}`);
+
+export const assignRole = (userId, roleName) =>
+  api.post('/enterprise/roles/assign', { user_id: userId, role_name: roleName });
+
+export const removeRole = (userId, roleId) =>
+  api.post('/enterprise/roles/remove', { user_id: userId, role_id: roleId });
+
+export const getUserRoles = (userId) =>
+  api.get(`/enterprise/users/${userId}/roles`);
+
+export const getUserPermissions = (userId) =>
+  api.get(`/enterprise/users/${userId}/permissions`);
+
+export const listAllPermissions = () =>
+  api.get('/enterprise/permissions/list');
+
+// Tenants
+export const listTenants = () =>
+  api.get('/enterprise/tenants');
+
+export const createTenant = (data) =>
+  api.post('/enterprise/tenants', data);
+
+export const updateTenant = (tenantId, data) =>
+  api.put(`/enterprise/tenants/${tenantId}`, data);
+
+export const deleteTenant = (tenantId) =>
+  api.delete(`/enterprise/tenants/${tenantId}`);
+
+export const assignUserToTenant = (userId, tenantId) =>
+  api.post('/enterprise/tenants/assign-user', { user_id: userId, tenant_id: tenantId });
+
+// Document Permissions
+export const getDocumentPermissions = (docId) =>
+  api.get(`/enterprise/documents/${docId}/permissions`);
+
+export const grantDocumentPermission = (documentId, userId, accessLevel) =>
+  api.post('/enterprise/documents/permissions', { document_id: documentId, user_id: userId, access_level: accessLevel });
+
+export const revokeDocumentPermission = (permId) =>
+  api.delete(`/enterprise/documents/permissions/${permId}`);
+
+// LDAP / SSO
+export const getLDAPStatus = () =>
+  api.get('/enterprise/ldap/status');
+
+export const getLDAPConfig = () =>
+  api.get('/enterprise/ldap/config');
+
+// Encryption
+export const getEncryptionStatus = () =>
+  api.get('/enterprise/encryption/status');
+
+export const generateEncryptionKey = () =>
+  api.post('/enterprise/encryption/generate-key');
+
+// Compliance / GDPR
+export const getAuditLogs = (params = {}) =>
+  api.get('/enterprise/audit-logs', { params });
+
+export const gdprExportData = (userId) =>
+  api.post('/enterprise/gdpr/export', { user_id: userId });
+
+export const gdprDeleteData = (userId, deleteAccount = false) =>
+  api.post('/enterprise/gdpr/delete', { user_id: userId, delete_account: deleteAccount });
+
+export const getComplianceReport = (reportType = 'general') =>
+  api.get(`/enterprise/compliance/report?report_type=${reportType}`);
+
+export const exportAuditCSV = (startDate = null, endDate = null) => {
+  const params = new URLSearchParams();
+  if (startDate) params.append('start_date', startDate);
+  if (endDate) params.append('end_date', endDate);
+  return api.get(`/enterprise/compliance/audit-csv?${params}`, { responseType: 'blob' });
+};
+
 export default api;

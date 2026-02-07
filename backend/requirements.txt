@@ -9,8 +9,8 @@ psycopg2-binary
 alembic
 
 # RAG components
-chromadb==0.4.22
-numpy<2.0
+chromadb
+# numpy<2.0
 
 # LangChain (shared with LDR)
 langchain
@@ -42,3 +42,7 @@ aiofiles
 pydantic
 pydantic-settings
 email-validator
+
+# Enterprise / Phase 4
+cryptography
+ldap3

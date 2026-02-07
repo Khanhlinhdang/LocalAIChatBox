@@ -10,6 +10,115 @@ def generate_uuid():
     return str(uuid.uuid4())
 
 
+# ==================== ENTERPRISE: TENANTS ====================
+
+class Tenant(Base):
+    __tablename__ = "tenants"
+
+    id = Column(Integer, primary_key=True, index=True)
+    name = Column(String(255), nullable=False)
+    slug = Column(String(100), unique=True, index=True, nullable=False)
+    description = Column(Text, nullable=True)
+    settings_json = Column(Text, nullable=True)  # JSON config per tenant
+    is_active = Column(Boolean, default=True)
+    max_users = Column(Integer, default=0)  # 0 = unlimited
+    max_storage_mb = Column(Integer, default=0)  # 0 = unlimited
+    created_at = Column(DateTime, default=datetime.utcnow)
+
+    users = relationship("User", back_populates="tenant")
+    documents = relationship("Document", back_populates="tenant")
+
+
+# ==================== ENTERPRISE: ROLES & PERMISSIONS ====================
+
+class Role(Base):
+    __tablename__ = "roles"
+
+    id = Column(Integer, primary_key=True, index=True)
+    name = Column(String(50), unique=True, nullable=False)
+    description = Column(String(255), nullable=True)
+    is_system = Column(Boolean, default=False)  # System roles can't be deleted
+    is_active = Column(Boolean, default=True)
+    created_at = Column(DateTime, default=datetime.utcnow)
+
+    permissions = relationship("RolePermission", back_populates="role", cascade="all, delete-orphan")
+    user_roles = relationship("UserRole", back_populates="role")
+
+
+class RolePermission(Base):
+    __tablename__ = "role_permissions"
+
+    id = Column(Integer, primary_key=True, index=True)
+    role_id = Column(Integer, ForeignKey("roles.id", ondelete="CASCADE"), nullable=False)
+    permission = Column(String(100), nullable=False)
+
+    role = relationship("Role", back_populates="permissions")
+
+    __table_args__ = (
+        UniqueConstraint('role_id', 'permission', name='uq_role_permission'),
+    )
+
+
+class UserRole(Base):
+    __tablename__ = "user_roles"
+
+    id = Column(Integer, primary_key=True, index=True)
+    user_id = Column(Integer, ForeignKey("users.id", ondelete="CASCADE"), nullable=False)
+    role_id = Column(Integer, ForeignKey("roles.id", ondelete="CASCADE"), nullable=False)
+    assigned_by = Column(Integer, ForeignKey("users.id"), nullable=True)
+    assigned_at = Column(DateTime, default=datetime.utcnow)
+
+    user = relationship("User", foreign_keys=[user_id], back_populates="user_roles")
+    role = relationship("Role", back_populates="user_roles")
+
+    __table_args__ = (
+        UniqueConstraint('user_id', 'role_id', name='uq_user_role'),
+    )
+
+
+# ==================== ENTERPRISE: DOCUMENT PERMISSIONS ====================
+
+class DocumentPermission(Base):
+    __tablename__ = "document_permissions"
+
+    id = Column(Integer, primary_key=True, index=True)
+    document_id = Column(Integer, ForeignKey("documents.id", ondelete="CASCADE"), nullable=False)
+    user_id = Column(Integer, ForeignKey("users.id", ondelete="CASCADE"), nullable=True)
+    role_id = Column(Integer, ForeignKey("roles.id", ondelete="CASCADE"), nullable=True)
+    access_level = Column(String(20), default="read")  # read, write, manage
+    granted_by = Column(Integer, ForeignKey("users.id"), nullable=True)
+    granted_at = Column(DateTime, default=datetime.utcnow)
+
+    document = relationship("Document", back_populates="permissions")
+    user = relationship("User", foreign_keys=[user_id])
+    granter = relationship("User", foreign_keys=[granted_by])
+
+    __table_args__ = (
+        UniqueConstraint('document_id', 'user_id', name='uq_doc_user_perm'),
+    )
+
+
+# ==================== ENTERPRISE: AUDIT LOG ====================
+
+class AuditLog(Base):
+    __tablename__ = "audit_logs"
+
+    id = Column(Integer, primary_key=True, index=True)
+    user_id = Column(Integer, ForeignKey("users.id"), nullable=True)
+    action = Column(String(100), nullable=False)
+    resource_type = Column(String(50), nullable=True)
+    resource_id = Column(Integer, nullable=True)
+    details = Column(Text, nullable=True)
+    ip_address = Column(String(45), nullable=True)
+    tenant_id = Column(Integer, ForeignKey("tenants.id"), nullable=True)
+    created_at = Column(DateTime, default=datetime.utcnow, index=True)
+
+    user = relationship("User")
+    tenant = relationship("Tenant")
+
+
+# ==================== USERS ====================
+
 class User(Base):
     __tablename__ = "users"
 
@@ -22,11 +131,18 @@ class User(Base):
     is_admin = Column(Boolean, default=False)
     created_at = Column(DateTime, default=datetime.utcnow)
 
-    documents = relationship("Document", back_populates="uploader")
+    # Enterprise fields
+    tenant_id = Column(Integer, ForeignKey("tenants.id"), nullable=True)
+    ldap_dn = Column(String(500), nullable=True)  # LDAP Distinguished Name
+    auth_provider = Column(String(20), default="local")  # local, ldap
+
+    documents = relationship("Document", back_populates="uploader", foreign_keys="Document.uploaded_by")
     conversations = relationship("Conversation", back_populates="user")
     research_tasks = relationship("ResearchTask", back_populates="user")
     chat_sessions = relationship("ChatSession", back_populates="user")
     usage_logs = relationship("UsageLog", back_populates="user")
+    user_roles = relationship("UserRole", back_populates="user", foreign_keys="UserRole.user_id")
+    tenant = relationship("Tenant", back_populates="users")
 
 
 # ==================== FOLDER & TAG SYSTEM ====================
@@ -40,6 +156,7 @@ class Folder(Base):
     created_by = Column(Integer, ForeignKey("users.id"), nullable=False)
     created_at = Column(DateTime, default=datetime.utcnow)
     color = Column(String(7), default="#4f8cff")
+    tenant_id = Column(Integer, ForeignKey("tenants.id"), nullable=True)
 
     parent = relationship("Folder", remote_side=[id], backref="children")
     creator = relationship("User")
@@ -84,10 +201,16 @@ class Document(Base):
     version = Column(Integer, default=1)
     description = Column(Text, nullable=True)
 
-    uploader = relationship("User", back_populates="documents")
+    # Enterprise fields
+    tenant_id = Column(Integer, ForeignKey("tenants.id"), nullable=True)
+    is_encrypted = Column(Boolean, default=False)
+
+    uploader = relationship("User", back_populates="documents", foreign_keys=[uploaded_by])
     folder = relationship("Folder", back_populates="documents")
     tags = relationship("DocumentTag", cascade="all, delete-orphan")
     versions = relationship("DocumentVersion", back_populates="document", cascade="all, delete-orphan")
+    permissions = relationship("DocumentPermission", back_populates="document", cascade="all, delete-orphan")
+    tenant = relationship("Tenant", back_populates="documents")
 
 
 class DocumentVersion(Base):

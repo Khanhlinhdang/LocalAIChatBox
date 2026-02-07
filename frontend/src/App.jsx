@@ -9,6 +9,7 @@ import DeepResearchPage from './pages/DeepResearchPage';
 import SettingsPage from './pages/SettingsPage';
 import AdminPage from './pages/AdminPage';
 import AnalyticsPage from './pages/AnalyticsPage';
+import EnterprisePage from './pages/EnterprisePage';
 import Navbar from './components/Navbar';
 import './App.css';
 
@@ -64,6 +65,7 @@ function App() {
             {user.is_admin && (
               <>
                 <Route path="/admin" element={<AdminPage user={user} />} />
+                <Route path="/enterprise" element={<EnterprisePage user={user} />} />
                 <Route path="/settings" element={<SettingsPage user={user} />} />
               </>
             )}
