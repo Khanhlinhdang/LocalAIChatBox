@@ -9,7 +9,8 @@ psycopg2-binary==2.9.9
 alembic==1.13.1
 
 # RAG components
-chromadb
+chromadb==0.5.3  # Version 0.5.3 supports NumPy 2.0
+numpy==1.26.4  # Pin to specific stable version
 
 # LangChain (shared with LDR)
 langchain>=0.2.0

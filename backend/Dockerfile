@@ -14,10 +14,6 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 COPY backend/requirements.txt /build/requirements.txt
 RUN pip install --no-cache-dir --prefix=/build/python-deps -r requirements.txt
 
-# Copy and install local-deep-research
-COPY local-deep-research /build/local-deep-research
-RUN pip install --no-cache-dir --prefix=/build/python-deps -e /build/local-deep-research
-
 # Pre-download sentence-transformers model to install location
 ENV SENTENCE_TRANSFORMERS_HOME=/build/models
 RUN python -c "import sys; sys.path.insert(0, '/build/python-deps/lib/python3.11/site-packages'); from sentence_transformers import SentenceTransformer; SentenceTransformer('all-MiniLM-L6-v2')" || true
@@ -36,7 +32,6 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 
 # Copy Python packages from builder
 COPY --from=builder /build/python-deps /usr/local
-COPY --from=builder /build/local-deep-research /app/local-deep-research
 
 # Create non-root user early for proper permissions
 RUN useradd -m -u 1000 -s /bin/bash appuser

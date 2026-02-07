@@ -1,6 +1,9 @@
 """
 Deep Research Service - Wraps LDR's AdvancedSearchSystem and IntegratedReportGenerator
 for programmatic use within the ChatBox backend.
+
+NOTE: Deep Research feature requires local-deep-research package.
+If not installed, the service will return error messages gracefully.
 """
 import json
 import traceback
@@ -11,6 +14,18 @@ from typing import Dict, Optional
 from sqlalchemy.orm import Session
 from app.models import ResearchTask
 from app.ldr_settings import build_settings_snapshot
+
+# Check if local-deep-research is available
+LDR_AVAILABLE = False
+LDR_ERROR = None
+
+try:
+    import local_deep_research
+    LDR_AVAILABLE = True
+except ImportError as e:
+    LDR_ERROR = f"local-deep-research package not installed: {str(e)}"
+    print(f"WARNING: {LDR_ERROR}")
+    print("Deep Research features will be disabled.")
 
 
 # Available research strategies
@@ -31,6 +46,7 @@ class DeepResearchService:
     def __init__(self):
         self._active_tasks: Dict[str, dict] = {}
         self._executor = ThreadPoolExecutor(max_workers=3)
+        self._ldr_available = LDR_AVAILABLE
 
     def start_research(self, query: str, strategy: str, user_id: int,
                        db: Session, overrides: Optional[Dict] = None) -> str:
@@ -49,6 +65,20 @@ class DeepResearchService:
         db.refresh(task)
 
         task_id = task.id
+
+        # Check if LDR is available
+        if not self._ldr_available:
+            task.status = "failed"
+            task.error_message = LDR_ERROR or "local-deep-research not available"
+            task.progress_message = "Deep Research feature is not installed"
+            db.commit()
+            
+            self._active_tasks[task_id] = {
+                "status": "failed",
+                "progress": 0.0,
+                "message": "Deep Research feature is not installed. Please install local-deep-research package."
+            }
+            return task_id
 
         # Track in memory
         self._active_tasks[task_id] = {
@@ -194,6 +224,14 @@ class DeepResearchService:
 
     def generate_report(self, task_id: str, db: Session) -> Dict:
         """Generate a detailed report from research findings."""
+        # Check if LDR is available
+        if not self._ldr_available:
+            return {
+                "error": "Deep Research feature is not installed",
+                "message": LDR_ERROR or "local-deep-research package not available",
+                "task_id": task_id
+            }
+            
         task = db.query(ResearchTask).filter(ResearchTask.id == task_id).first()
         if not task:
             raise ValueError(f"Task {task_id} not found")
