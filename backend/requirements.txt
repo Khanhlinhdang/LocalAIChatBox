@@ -1,39 +1,37 @@
-fastapi==0.109.0
-uvicorn[standard]==0.27.0
-python-multipart==0.0.6
-python-jose[cryptography]==3.3.0
-passlib==1.7.4
-bcrypt==3.2.2  # Must be 3.x for passlib 1.7.4 compatibility, pin AFTER passlib
-python-dotenv==1.0.0
-sqlalchemy==2.0.25
-psycopg2-binary==2.9.9
-alembic==1.13.1
+fastapi
+uvicorn[standard]
+python-multipart
+python-jose[cryptography]
+passlib
+python-dotenv
+sqlalchemy
+psycopg2-binary
+alembic
 
 # RAG components
-chromadb==0.4.22  # Stable version, requires NumPy 1.x
-numpy>=1.21.0,<2.0  # ChromaDB 0.4.22 not compatible with NumPy 2.0
+chromadb
 
 # LangChain (shared with LDR)
-langchain>=0.2.0
-langchain-community>=0.2.0
-langchain-ollama>=0.1.0
+langchain
+langchain-community
+langchain-ollama
 
 # Embeddings
-sentence-transformers>=2.2.0
+sentence-transformers
 
 # Document processing
-pymupdf==1.23.21
-python-docx==1.1.0
-Pillow==10.2.0
+pymupdf
+python-docx
+Pillow
 
 # Knowledge Graph
-networkx==3.2.1
+networkx
 
 # Web requests
-requests>=2.31.0
+requests
 
 # Utilities
-aiofiles==23.2.1
-pydantic==2.5.3
-pydantic-settings==2.1.0
-email-validator==2.1.0
+aiofiles
+pydantic
+pydantic-settings
+email-validator
