@@ -52,16 +52,46 @@ export const sendChatQuery = (question, useContext = true, useKnowledgeGraph = t
     k,
   });
 
+export const sendChatQueryMultiTurn = (question, sessionId = null, useKnowledgeGraph = true, includeMultimodal = true, searchMode = 'hybrid', k = 5, contextTurns = 5) =>
+  api.post('/chat/query-multiturn', {
+    question,
+    session_id: sessionId,
+    use_context: true,
+    use_knowledge_graph: useKnowledgeGraph,
+    include_multimodal: includeMultimodal,
+    search_mode: searchMode,
+    k,
+    context_turns: contextTurns,
+  });
+
 export const getChatHistory = (limit = 50) =>
   api.get(`/chat/history?limit=${limit}`);
 
 export const clearChatHistory = () =>
   api.delete('/chat/history');
 
+// Chat Sessions
+export const createChatSession = (title = 'New Chat') =>
+  api.post('/chat/sessions', { title });
+
+export const listChatSessions = () =>
+  api.get('/chat/sessions');
+
+export const getSessionMessages = (sessionId) =>
+  api.get(`/chat/sessions/${sessionId}/messages`);
+
+export const updateChatSession = (sessionId, title) =>
+  api.put(`/chat/sessions/${sessionId}`, { title });
+
+export const deleteChatSession = (sessionId) =>
+  api.delete(`/chat/sessions/${sessionId}`);
+
 // Documents
-export const uploadDocuments = (files, onProgress) => {
+export const uploadDocuments = (files, onProgress, folderId = null, description = null) => {
   const formData = new FormData();
   files.forEach((file) => formData.append('files', file));
+  if (folderId) formData.append('folder_id', folderId);
+  if (description) formData.append('description', description);
   return api.post('/documents/upload', formData, {
     headers: { 'Content-Type': 'multipart/form-data' },
     onUploadProgress: onProgress,
@@ -73,6 +103,51 @@ export const listDocuments = () =>
 
 export const deleteDocument = (docId) =>
   api.delete(`/documents/${docId}`);
+
+export const moveDocument = (docId, folderId) =>
+  api.put(`/documents/${docId}/move`, { folder_id: folderId });
+
+export const setDocumentTags = (docId, tagIds) =>
+  api.put(`/documents/${docId}/tags`, { tag_ids: tagIds });
+
+export const uploadDocumentVersion = (docId, file, changeNote = '', onProgress) => {
+  const formData = new FormData();
+  formData.append('file', file);
+  formData.append('change_note', changeNote);
+  return api.post(`/documents/${docId}/version`, formData, {
+    headers: { 'Content-Type': 'multipart/form-data' },
+    onUploadProgress: onProgress,
+  });
+};
+
+export const getDocumentVersions = (docId) =>
+  api.get(`/documents/${docId}/versions`);
+
+export const searchDocumentsAdvanced = (params) =>
+  api.get('/documents/search', { params });
+
+// Folders
+export const createFolder = (name, parentId = null, color = '#4f8cff') =>
+  api.post('/folders', { name, parent_id: parentId, color });
+
+export const listFolders = () =>
+  api.get('/folders');
+
+export const updateFolder = (folderId, data) =>
+  api.put(`/folders/${folderId}`, data);
+
+export const deleteFolder = (folderId) =>
+  api.delete(`/folders/${folderId}`);
+
+// Tags
+export const createTag = (name, color = '#4f8cff') =>
+  api.post('/tags', { name, color });
+
+export const listTags = () =>
+  api.get('/tags');
+
+export const deleteTag = (tagId) =>
+  api.delete(`/tags/${tagId}`);
 
 // Admin
 export const getAdminStats = () =>
@@ -121,6 +196,44 @@ export const getKGEntity = (entityName, hops = 2) =>
 
 export const rebuildKG = () =>
   api.post('/knowledge-graph/rebuild');
+
+export const getKGFullGraph = (maxNodes = 500) =>
+  api.get(`/knowledge-graph/full?max_nodes=${maxNodes}`);
+
+// Analytics
+export const getAnalyticsOverview = (days = 30) =>
+  api.get(`/analytics/overview?days=${days}`);
+
+export const getAnalyticsDaily = (days = 30) =>
+  api.get(`/analytics/daily?days=${days}`);
+
+export const getAnalyticsTopUsers = (days = 30, limit = 10) =>
+  api.get(`/analytics/top-users?days=${days}&limit=${limit}`);
+
+export const getAnalyticsPopularQueries = (days = 30, limit = 20) =>
+  api.get(`/analytics/popular-queries?days=${days}&limit=${limit}`);
+
+export const getAnalyticsDocuments = () =>
+  api.get('/analytics/documents');
+
+export const getAnalyticsActions = (days = 30) =>
+  api.get(`/analytics/actions?days=${days}`);
+
+// Export
+export const exportChat = (format = 'json', sessionId = null) => {
+  const params = new URLSearchParams({ format });
+  if (sessionId) params.append('session_id', sessionId);
+  return api.get(`/export/chat?${params}`, { responseType: 'blob' });
+};
+
+export const exportResearch = (taskId, format = 'markdown') =>
+  api.get(`/export/research/${taskId}?format=${format}`, { responseType: 'blob' });
+
+export const exportKnowledgeGraph = (format = 'json') =>
+  api.get(`/export/knowledge-graph?format=${format}`, { responseType: 'blob' });
+
+export const exportDocumentsList = (format = 'csv') =>
+  api.get(`/export/documents?format=${format}`, { responseType: 'blob' });
 
 // Deep Research
 export const startResearch = (query, strategy = 'source-based', overrides = null) =>

@@ -26,6 +26,9 @@ function Navbar({ user, onLogout }) {
         <Link to="/knowledge-graph" className={location.pathname === '/knowledge-graph' ? 'active' : ''}>
           Graph
         </Link>
+        <Link to="/analytics" className={location.pathname === '/analytics' ? 'active' : ''}>
+          Analytics
+        </Link>
         {user.is_admin && (
           <>
             <Link to="/admin" className={location.pathname === '/admin' ? 'active' : ''}>

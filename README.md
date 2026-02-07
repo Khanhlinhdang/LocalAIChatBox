@@ -995,3 +995,34 @@ MIT License - Xem file `LICENSE` để biết thêm chi tiết.
 Made with ❤️ by [Your Name/Team]
 
 </div>
+
+
+🚀 VI. LỘ TRÌNH ƯU TIÊN (Roadmap)
+Phase 1: Production Hardening (1-2 tháng)
+✅ Add logging (structlog + ELK/Loki)
+✅ Add monitoring (Prometheus + Grafana)
+✅ Implement backup/restore scripts
+✅ Add unit + integration tests (target: 70% coverage)
+✅ Setup CI/CD pipeline (GitHub Actions)
+✅ Add audit logging system
+Phase 2: Performance & Scale (1-2 tháng)
+✅ Migrate ChromaDB → Qdrant/Milvus
+✅ Implement Redis caching
+✅ Enable GPU support + quantized models
+✅ Add response streaming (SSE)
+✅ Migrate deep research → Celery + Redis
+✅ Load testing & optimization
+Phase 3: Feature Enhancement (2-3 tháng)
+✅ Document versioning & folders
+✅ Chat history with context (multi-turn)
+✅ Interactive KG visualization (D3.js/Cytoscape)
+✅ Advanced filters & faceted search
+✅ Usage analytics dashboard
+✅ Export features (chat, reports, graphs)
+Phase 4: Enterprise Features (2-3 tháng)
+✅ LDAP/AD integration (SSO)
+✅ RBAC (Role-Based Access Control)
+✅ Per-document permissions
+✅ Encryption at rest
+✅ Compliance reports (GDPR, etc.)
+✅ Multi-tenancy support

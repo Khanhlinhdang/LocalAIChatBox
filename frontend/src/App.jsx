@@ -8,6 +8,7 @@ import KnowledgeGraphPage from './pages/KnowledgeGraphPage';
 import DeepResearchPage from './pages/DeepResearchPage';
 import SettingsPage from './pages/SettingsPage';
 import AdminPage from './pages/AdminPage';
+import AnalyticsPage from './pages/AnalyticsPage';
 import Navbar from './components/Navbar';
 import './App.css';
 
@@ -59,6 +60,7 @@ function App() {
             <Route path="/documents" element={<DocumentsPage user={user} />} />
             <Route path="/research" element={<DeepResearchPage user={user} />} />
             <Route path="/knowledge-graph" element={<KnowledgeGraphPage user={user} />} />
+            <Route path="/analytics" element={<AnalyticsPage user={user} />} />
             {user.is_admin && (
               <>
                 <Route path="/admin" element={<AdminPage user={user} />} />

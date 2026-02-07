@@ -13,6 +13,7 @@ Features:
 from fastapi import FastAPI, Depends, HTTPException, status, UploadFile, File, Form
 from fastapi.middleware.cors import CORSMiddleware
 from sqlalchemy.orm import Session
+from sqlalchemy import func
 from typing import List, Optional
 from datetime import timedelta
 import shutil
@@ -20,7 +21,10 @@ import json
 from pathlib import Path
 
 from app.database import get_db, init_db
-from app.models import User, Document as DBDocument, Conversation
+from app.models import (
+    User, Document as DBDocument, Conversation, ChatSession,
+    Folder, Tag, DocumentTag, DocumentVersion, UsageLog
+)
 from app.auth import (
     get_password_hash, verify_password, create_access_token,
     get_current_user, get_current_admin
@@ -28,7 +32,17 @@ from app.auth import (
 from app.enhanced_rag_engine import get_rag_engine
 from app.knowledge_graph import get_kg_engine
 from app.research_routes import router as research_router
+from app.analytics import (
+    log_usage, get_usage_overview, get_daily_activity,
+    get_top_users, get_popular_queries, get_document_stats,
+    get_action_breakdown
+)
+from app.export_service import (
+    export_chat_history, export_research_report,
+    export_knowledge_graph, export_documents_list
+)
 from pydantic import BaseModel, EmailStr
+from fastapi.responses import Response
 
 app = FastAPI(
     title="LocalAIChatBox API",
@@ -141,6 +155,46 @@ class PasswordChange(BaseModel):
     new_password: str
 
 
+class FolderCreate(BaseModel):
+    name: str
+    parent_id: Optional[int] = None
+    color: Optional[str] = "#4f8cff"
+
+
+class FolderUpdate(BaseModel):
+    name: Optional[str] = None
+    parent_id: Optional[int] = None
+    color: Optional[str] = None
+
+
+class TagCreate(BaseModel):
+    name: str
+    color: Optional[str] = "#4f8cff"
+
+
+class DocumentMoveRequest(BaseModel):
+    folder_id: Optional[int] = None
+
+
+class DocumentTagRequest(BaseModel):
+    tag_ids: List[int]
+
+
+class ChatSessionCreate(BaseModel):
+    title: Optional[str] = "New Chat"
+
+
+class ChatQueryMultiTurn(BaseModel):
+    question: str
+    session_id: Optional[str] = None
+    use_context: bool = True
+    use_knowledge_graph: bool = True
+    include_multimodal: bool = True
+    search_mode: str = "hybrid"
+    k: int = 5
+    context_turns: int = 5  # Number of previous turns to include as context
+
+
 # ==================== AUTH ENDPOINTS ====================
 
 @app.post("/api/auth/register", response_model=TokenResponse)
@@ -205,22 +259,8 @@ async def login(credentials: UserLogin, db: Session = Depends(get_db)):
             raise HTTPException(status_code=403, detail="User account is disabled")
 
         access_token = create_access_token(data={"sub": user.username})
+        log_usage(db, user.id, "login", "auth")
         return {
-            "access_token": access_token,
-            "token_type": "bearer",
-            "user": {
-                "id": user.id,
-                "username": user.username,
-                "email": user.email,
-                "full_name": user.full_name,
-                "is_admin": user.is_admin
-            }
-        }
-    except HTTPException:
-        raise
-    except Exception as e:
-        print(f"Login error: {str(e)}")
-        raise HTTPException(status_code=500, detail=f"Login failed: {str(e)}")
 
 
 @app.get("/api/auth/me")
@@ -252,6 +292,8 @@ async def change_password(
 @app.post("/api/documents/upload")
 async def upload_documents(
     files: List[UploadFile] = File(...),
+    folder_id: Optional[int] = Form(None),
+    description: Optional[str] = Form(None),
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db)
 ):
@@ -300,7 +342,9 @@ async def upload_documents(
                 file_type=file_path.suffix,
                 num_chunks=result.get("text_chunks", 0),
                 uploaded_by=current_user.id,
-                is_indexed=True
+                is_indexed=True,
+                folder_id=folder_id,
+                description=description,
             )
             db.add(db_document)
             db.commit()
@@ -343,7 +387,14 @@ async def list_documents(
                 "uploaded_by": doc.uploader.username if doc.uploader else "Unknown",
                 "uploaded_at": doc.uploaded_at.isoformat(),
                 "num_chunks": doc.num_chunks,
-                "is_indexed": doc.is_indexed
+                "is_indexed": doc.is_indexed,
+                "folder_id": doc.folder_id,
+                "version": doc.version,
+                "description": doc.description,
+                "tags": [
+                    {"id": dt.tag_id, "name": db.query(Tag).filter(Tag.id == dt.tag_id).first().name if db.query(Tag).filter(Tag.id == dt.tag_id).first() else ""}
+                    for dt in (doc.tags or [])
+                ],
             }
             for doc in documents
         ]
@@ -785,4 +836,814 @@ async def batch_process_documents(
         "message": "Batch processing complete",
         "documents_processed": len(results),
         "results": results,
+    }
+
+
+# ==================== FOLDER MANAGEMENT ENDPOINTS ====================
+
+@app.post("/api/folders")
+async def create_folder(
+    folder_data: FolderCreate,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    """Create a new folder for organizing documents."""
+    folder = Folder(
+        name=folder_data.name,
+        parent_id=folder_data.parent_id,
+        created_by=current_user.id,
+        color=folder_data.color or "#4f8cff",
+    )
+    db.add(folder)
+    db.commit()
+    db.refresh(folder)
+    return {"id": folder.id, "name": folder.name, "parent_id": folder.parent_id, "color": folder.color}
+
+
+@app.get("/api/folders")
+async def list_folders(
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    """List all folders with document counts."""
+    folders = db.query(Folder).order_by(Folder.name).all()
+    result = []
+    for f in folders:
+        doc_count = db.query(DBDocument).filter(DBDocument.folder_id == f.id).count()
+        result.append({
+            "id": f.id,
+            "name": f.name,
+            "parent_id": f.parent_id,
+            "color": f.color,
+            "document_count": doc_count,
+            "created_by": f.creator.username if f.creator else "Unknown",
+            "created_at": f.created_at.isoformat(),
+        })
+    return {"folders": result}
+
+
+@app.put("/api/folders/{folder_id}")
+async def update_folder(
+    folder_id: int,
+    folder_data: FolderUpdate,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    folder = db.query(Folder).filter(Folder.id == folder_id).first()
+    if not folder:
+        raise HTTPException(status_code=404, detail="Folder not found")
+    if folder_data.name is not None:
+        folder.name = folder_data.name
+    if folder_data.parent_id is not None:
+        folder.parent_id = folder_data.parent_id
+    if folder_data.color is not None:
+        folder.color = folder_data.color
+    db.commit()
+    return {"message": "Folder updated"}
+
+
+@app.delete("/api/folders/{folder_id}")
+async def delete_folder(
+    folder_id: int,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    folder = db.query(Folder).filter(Folder.id == folder_id).first()
+    if not folder:
+        raise HTTPException(status_code=404, detail="Folder not found")
+    # Move documents out of folder
+    db.query(DBDocument).filter(DBDocument.folder_id == folder_id).update({"folder_id": None})
+    # Move child folders out
+    db.query(Folder).filter(Folder.parent_id == folder_id).update({"parent_id": folder.parent_id})
+    db.delete(folder)
+    db.commit()
+    return {"message": "Folder deleted"}
+
+
+@app.put("/api/documents/{doc_id}/move")
+async def move_document_to_folder(
+    doc_id: int,
+    move_data: DocumentMoveRequest,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    doc = db.query(DBDocument).filter(DBDocument.id == doc_id).first()
+    if not doc:
+        raise HTTPException(status_code=404, detail="Document not found")
+    doc.folder_id = move_data.folder_id
+    db.commit()
+    return {"message": "Document moved"}
+
+
+# ==================== TAG MANAGEMENT ENDPOINTS ====================
+
+@app.post("/api/tags")
+async def create_tag(
+    tag_data: TagCreate,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    existing = db.query(Tag).filter(Tag.name == tag_data.name).first()
+    if existing:
+        raise HTTPException(status_code=400, detail="Tag already exists")
+    tag = Tag(name=tag_data.name, color=tag_data.color or "#4f8cff")
+    db.add(tag)
+    db.commit()
+    db.refresh(tag)
+    return {"id": tag.id, "name": tag.name, "color": tag.color}
+
+
+@app.get("/api/tags")
+async def list_tags(
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    tags = db.query(Tag).order_by(Tag.name).all()
+    result = []
+    for t in tags:
+        doc_count = db.query(DocumentTag).filter(DocumentTag.tag_id == t.id).count()
+        result.append({"id": t.id, "name": t.name, "color": t.color, "document_count": doc_count})
+    return {"tags": result}
+
+
+@app.delete("/api/tags/{tag_id}")
+async def delete_tag(
+    tag_id: int,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    tag = db.query(Tag).filter(Tag.id == tag_id).first()
+    if not tag:
+        raise HTTPException(status_code=404, detail="Tag not found")
+    db.query(DocumentTag).filter(DocumentTag.tag_id == tag_id).delete()
+    db.delete(tag)
+    db.commit()
+    return {"message": "Tag deleted"}
+
+
+@app.put("/api/documents/{doc_id}/tags")
+async def set_document_tags(
+    doc_id: int,
+    tag_data: DocumentTagRequest,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    doc = db.query(DBDocument).filter(DBDocument.id == doc_id).first()
+    if not doc:
+        raise HTTPException(status_code=404, detail="Document not found")
+
+    # Clear existing tags
+    db.query(DocumentTag).filter(DocumentTag.document_id == doc_id).delete()
+
+    # Add new tags
+    for tag_id in tag_data.tag_ids:
+        dt = DocumentTag(document_id=doc_id, tag_id=tag_id)
+        db.add(dt)
+
+    db.commit()
+    return {"message": "Tags updated"}
+
+
+# ==================== DOCUMENT VERSIONING ====================
+
+@app.post("/api/documents/{doc_id}/version")
+async def upload_document_version(
+    doc_id: int,
+    file: UploadFile = File(...),
+    change_note: str = Form(""),
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    """Upload a new version of an existing document."""
+    doc = db.query(DBDocument).filter(DBDocument.id == doc_id).first()
+    if not doc:
+        raise HTTPException(status_code=404, detail="Document not found")
+
+    rag_engine = get_rag_engine()
+    documents_path = Path("/app/data/documents")
+    documents_path.mkdir(parents=True, exist_ok=True)
+
+    # Save old version record
+    old_version = DocumentVersion(
+        document_id=doc.id,
+        version_number=doc.version,
+        filename=doc.filename,
+        file_path=doc.file_path,
+        file_size_mb=doc.file_size_mb,
+        num_chunks=doc.num_chunks,
+        uploaded_by=doc.uploaded_by,
+        change_note=change_note or f"Version {doc.version}",
+    )
+    db.add(old_version)
+
+    # Save new file
+    new_version = doc.version + 1
+    file_path = documents_path / f"{current_user.id}_v{new_version}_{file.filename}"
+    with open(file_path, "wb") as buffer:
+        shutil.copyfileobj(file.file, buffer)
+
+    # Remove old chunks from vector store
+    rag_engine.delete_document_chunks(doc.filename)
+
+    # Process new version
+    result = rag_engine.process_document_complete(
+        file_path=str(file_path),
+        doc_id=f"doc_{current_user.id}_{file.filename}",
+        filename=file.filename,
+        user_id=current_user.id,
+        username=current_user.username,
+        enable_multimodal=True,
+    )
+
+    # Update document record
+    doc.filename = file.filename
+    doc.original_filename = file.filename
+    doc.file_path = str(file_path)
+    doc.file_size_mb = round(file_path.stat().st_size / (1024 * 1024), 2)
+    doc.file_type = file_path.suffix
+    doc.num_chunks = result.get("text_chunks", 0)
+    doc.version = new_version
+    db.commit()
+
+    log_usage(db, current_user.id, "upload", "document", str(doc_id), {"action": "version_update", "version": new_version})
+
+    return {
+        "message": f"Version {new_version} uploaded",
+        "version": new_version,
+        "chunks": result.get("text_chunks", 0),
+        "status": result.get("status", "success"),
+    }
+
+
+@app.get("/api/documents/{doc_id}/versions")
+async def get_document_versions(
+    doc_id: int,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    doc = db.query(DBDocument).filter(DBDocument.id == doc_id).first()
+    if not doc:
+        raise HTTPException(status_code=404, detail="Document not found")
+
+    versions = db.query(DocumentVersion).filter(
+        DocumentVersion.document_id == doc_id
+    ).order_by(DocumentVersion.version_number.desc()).all()
+
+    return {
+        "current_version": doc.version,
+        "versions": [
+            {
+                "version_number": v.version_number,
+                "filename": v.filename,
+                "file_size_mb": v.file_size_mb,
+                "num_chunks": v.num_chunks,
+                "uploaded_by": v.uploader.username if v.uploader else "Unknown",
+                "created_at": v.created_at.isoformat(),
+                "change_note": v.change_note,
+            }
+            for v in versions
+        ],
+    }
+
+
+# ==================== CHAT SESSION ENDPOINTS (Multi-turn) ====================
+
+@app.post("/api/chat/sessions")
+async def create_chat_session(
+    session_data: ChatSessionCreate,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    """Create a new chat session for multi-turn conversations."""
+    session = ChatSession(
+        user_id=current_user.id,
+        title=session_data.title or "New Chat",
+    )
+    db.add(session)
+    db.commit()
+    db.refresh(session)
+    return {"id": session.id, "title": session.title, "created_at": session.created_at.isoformat()}
+
+
+@app.get("/api/chat/sessions")
+async def list_chat_sessions(
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    """List all chat sessions for the current user."""
+    sessions = db.query(ChatSession).filter(
+        ChatSession.user_id == current_user.id,
+        ChatSession.is_active == True,
+    ).order_by(ChatSession.updated_at.desc()).all()
+
+    result = []
+    for s in sessions:
+        msg_count = db.query(Conversation).filter(Conversation.session_id == s.id).count()
+        last_msg = db.query(Conversation).filter(
+            Conversation.session_id == s.id
+        ).order_by(Conversation.created_at.desc()).first()
+
+        result.append({
+            "id": s.id,
+            "title": s.title,
+            "message_count": msg_count,
+            "last_message": last_msg.question[:100] if last_msg else None,
+            "created_at": s.created_at.isoformat(),
+            "updated_at": s.updated_at.isoformat(),
+        })
+
+    return {"sessions": result}
+
+
+@app.get("/api/chat/sessions/{session_id}/messages")
+async def get_session_messages(
+    session_id: str,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    """Get all messages in a chat session."""
+    session = db.query(ChatSession).filter(
+        ChatSession.id == session_id,
+        ChatSession.user_id == current_user.id,
+    ).first()
+    if not session:
+        raise HTTPException(status_code=404, detail="Session not found")
+
+    messages = db.query(Conversation).filter(
+        Conversation.session_id == session_id
+    ).order_by(Conversation.created_at.asc()).all()
+
+    return {
+        "session_id": session_id,
+        "title": session.title,
+        "messages": [
+            {
+                "id": m.id,
+                "question": m.question,
+                "answer": m.answer,
+                "sources_used": m.sources_used,
+                "entities_found": m.entities_found,
+                "search_mode": m.search_mode,
+                "created_at": m.created_at.isoformat(),
+            }
+            for m in messages
+        ],
+    }
+
+
+@app.put("/api/chat/sessions/{session_id}")
+async def update_chat_session(
+    session_id: str,
+    session_data: ChatSessionCreate,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    session = db.query(ChatSession).filter(
+        ChatSession.id == session_id,
+        ChatSession.user_id == current_user.id,
+    ).first()
+    if not session:
+        raise HTTPException(status_code=404, detail="Session not found")
+    session.title = session_data.title or session.title
+    db.commit()
+    return {"message": "Session updated"}
+
+
+@app.delete("/api/chat/sessions/{session_id}")
+async def delete_chat_session(
+    session_id: str,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    session = db.query(ChatSession).filter(
+        ChatSession.id == session_id,
+        ChatSession.user_id == current_user.id,
+    ).first()
+    if not session:
+        raise HTTPException(status_code=404, detail="Session not found")
+    # Delete messages in session
+    db.query(Conversation).filter(Conversation.session_id == session_id).delete()
+    db.delete(session)
+    db.commit()
+    return {"message": "Session deleted"}
+
+
+@app.post("/api/chat/query-multiturn")
+async def chat_query_multiturn(
+    query: ChatQueryMultiTurn,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    """
+    Multi-turn chat query with conversation context.
+    Sends previous conversation turns to LLM for context-aware answers.
+    Inspired by LightRAG's conversation history support.
+    """
+    from app.multimodal.query_engine import QueryEngine
+
+    rag_engine = get_rag_engine()
+    query_engine = QueryEngine(rag_engine)
+
+    # Handle session
+    session_id = query.session_id
+    if not session_id:
+        # Create new session
+        session = ChatSession(user_id=current_user.id, title=query.question[:80])
+        db.add(session)
+        db.commit()
+        db.refresh(session)
+        session_id = session.id
+    else:
+        session = db.query(ChatSession).filter(
+            ChatSession.id == session_id,
+            ChatSession.user_id == current_user.id,
+        ).first()
+        if not session:
+            raise HTTPException(status_code=404, detail="Session not found")
+
+    # Build conversation context from previous turns
+    conversation_context = ""
+    if query.context_turns > 0:
+        prev_messages = db.query(Conversation).filter(
+            Conversation.session_id == session_id
+        ).order_by(Conversation.created_at.desc()).limit(query.context_turns).all()
+
+        if prev_messages:
+            prev_messages.reverse()
+            context_parts = []
+            for msg in prev_messages:
+                context_parts.append(f"User: {msg.question}")
+                # Truncate long answers in context
+                answer_preview = msg.answer[:500] if len(msg.answer) > 500 else msg.answer
+                context_parts.append(f"Assistant: {answer_preview}")
+            conversation_context = "\n".join(context_parts)
+
+    # Build enhanced question with conversation context
+    enhanced_question = query.question
+    if conversation_context:
+        enhanced_question = (
+            f"Previous conversation context:\n{conversation_context}\n\n"
+            f"Current question: {query.question}\n\n"
+            f"Answer the current question considering the conversation context above."
+        )
+
+    # Execute query
+    result = query_engine.query(
+        question=enhanced_question,
+        mode=query.search_mode,
+        k=query.k,
+        use_knowledge_graph=query.use_knowledge_graph,
+        include_multimodal=query.include_multimodal,
+    )
+
+    # Save conversation
+    entities_json = json.dumps(result.get("entities_found", []), default=str) if result.get("entities_found") else None
+    conversation = Conversation(
+        user_id=current_user.id,
+        session_id=session_id,
+        question=query.question,
+        answer=result["answer"],
+        sources_used=str(result.get("num_sources", 0)),
+        entities_found=entities_json,
+        search_mode=query.search_mode,
+        context_used=query.use_context,
+    )
+    db.add(conversation)
+
+    # Update session title if it's the first message
+    msg_count = db.query(Conversation).filter(Conversation.session_id == session_id).count()
+    if msg_count == 0:
+        session = db.query(ChatSession).filter(ChatSession.id == session_id).first()
+        if session:
+            session.title = query.question[:80]
+
+    db.commit()
+
+    # Log usage
+    log_usage(db, current_user.id, "query", "chat", session_id, {
+        "search_mode": query.search_mode,
+        "use_kg": query.use_knowledge_graph,
+        "context_turns": query.context_turns,
+    })
+
+    result["session_id"] = session_id
+    return result
+
+
+# ==================== ADVANCED SEARCH & FILTERS ====================
+
+@app.get("/api/documents/search")
+async def search_documents_advanced(
+    q: str = "",
+    file_type: str = "",
+    folder_id: int = None,
+    tag_id: int = None,
+    uploaded_by: str = "",
+    date_from: str = "",
+    date_to: str = "",
+    sort_by: str = "date",
+    sort_order: str = "desc",
+    page: int = 1,
+    page_size: int = 20,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    """
+    Advanced document search with filters and faceted results.
+    Inspired by LightRAG's document listing with status filters.
+    """
+    from sqlalchemy import or_
+    from datetime import datetime as dt
+
+    query = db.query(DBDocument)
+
+    # Text search
+    if q:
+        query = query.filter(
+            or_(
+                DBDocument.filename.ilike(f"%{q}%"),
+                DBDocument.original_filename.ilike(f"%{q}%"),
+                DBDocument.description.ilike(f"%{q}%"),
+            )
+        )
+
+    # File type filter
+    if file_type:
+        query = query.filter(DBDocument.file_type == file_type)
+
+    # Folder filter
+    if folder_id is not None:
+        if folder_id == 0:  # Root / unfiled
+            query = query.filter(DBDocument.folder_id == None)
+        else:
+            query = query.filter(DBDocument.folder_id == folder_id)
+
+    # Tag filter
+    if tag_id:
+        doc_ids = [dt.document_id for dt in db.query(DocumentTag).filter(DocumentTag.tag_id == tag_id).all()]
+        query = query.filter(DBDocument.id.in_(doc_ids))
+
+    # User filter
+    if uploaded_by:
+        user_obj = db.query(User).filter(User.username == uploaded_by).first()
+        if user_obj:
+            query = query.filter(DBDocument.uploaded_by == user_obj.id)
+
+    # Date range
+    if date_from:
+        try:
+            query = query.filter(DBDocument.uploaded_at >= dt.fromisoformat(date_from))
+        except ValueError:
+            pass
+    if date_to:
+        try:
+            query = query.filter(DBDocument.uploaded_at <= dt.fromisoformat(date_to))
+        except ValueError:
+            pass
+
+    # Get total count before pagination
+    total = query.count()
+
+    # Sorting
+    if sort_by == "name":
+        order_col = DBDocument.filename
+    elif sort_by == "size":
+        order_col = DBDocument.file_size_mb
+    elif sort_by == "chunks":
+        order_col = DBDocument.num_chunks
+    elif sort_by == "type":
+        order_col = DBDocument.file_type
+    else:
+        order_col = DBDocument.uploaded_at
+
+    if sort_order == "asc":
+        query = query.order_by(order_col.asc())
+    else:
+        query = query.order_by(order_col.desc())
+
+    # Pagination
+    documents = query.offset((page - 1) * page_size).limit(page_size).all()
+
+    # Build facets
+    all_types = db.query(DBDocument.file_type, func.count(DBDocument.id)).group_by(DBDocument.file_type).all()
+    all_uploaders = db.query(User.username, func.count(DBDocument.id)).join(
+        DBDocument, DBDocument.uploaded_by == User.id
+    ).group_by(User.username).all()
+
+    return {
+        "total": total,
+        "page": page,
+        "page_size": page_size,
+        "total_pages": (total + page_size - 1) // page_size,
+        "documents": [
+            {
+                "id": doc.id,
+                "filename": doc.filename,
+                "file_type": doc.file_type,
+                "file_size_mb": doc.file_size_mb,
+                "uploaded_by": doc.uploader.username if doc.uploader else "Unknown",
+                "uploaded_at": doc.uploaded_at.isoformat(),
+                "num_chunks": doc.num_chunks,
+                "is_indexed": doc.is_indexed,
+                "folder_id": doc.folder_id,
+                "version": doc.version,
+                "description": doc.description,
+                "tags": [
+                    {"id": dt.tag_id, "name": db.query(Tag).filter(Tag.id == dt.tag_id).first().name if db.query(Tag).filter(Tag.id == dt.tag_id).first() else ""}
+                    for dt in (doc.tags or [])
+                ],
+            }
+            for doc in documents
+        ],
+        "facets": {
+            "file_types": [{"type": t[0] or "unknown", "count": t[1]} for t in all_types],
+            "uploaders": [{"username": u[0], "count": u[1]} for u in all_uploaders],
+        },
+    }
+
+
+# ==================== ANALYTICS ENDPOINTS ====================
+
+@app.get("/api/analytics/overview")
+async def analytics_overview(
+    days: int = 30,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    """Get usage analytics overview."""
+    return get_usage_overview(db, days)
+
+
+@app.get("/api/analytics/daily")
+async def analytics_daily(
+    days: int = 30,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    """Get daily activity data for charts."""
+    return {"daily_activity": get_daily_activity(db, days)}
+
+
+@app.get("/api/analytics/top-users")
+async def analytics_top_users(
+    days: int = 30,
+    limit: int = 10,
+    current_user: User = Depends(get_current_admin),
+    db: Session = Depends(get_db)
+):
+    """Get most active users (admin only)."""
+    return {"top_users": get_top_users(db, days, limit)}
+
+
+@app.get("/api/analytics/popular-queries")
+async def analytics_popular_queries(
+    days: int = 30,
+    limit: int = 20,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    """Get most common queries."""
+    return {"popular_queries": get_popular_queries(db, days, limit)}
+
+
+@app.get("/api/analytics/documents")
+async def analytics_documents(
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    """Get document analytics."""
+    return get_document_stats(db)
+
+
+@app.get("/api/analytics/actions")
+async def analytics_actions(
+    days: int = 30,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    """Get action type breakdown."""
+    return {"actions": get_action_breakdown(db, days)}
+
+
+# ==================== EXPORT ENDPOINTS ====================
+
+@app.get("/api/export/chat")
+async def export_chat(
+    format: str = "json",
+    session_id: str = None,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    """Export chat history as JSON, CSV, or Markdown."""
+    try:
+        result = export_chat_history(db, current_user.id, session_id, format)
+        log_usage(db, current_user.id, "export", "chat", session_id, {"format": format})
+        return Response(
+            content=result["content"],
+            media_type=result["content_type"],
+            headers={"Content-Disposition": f"attachment; filename={result['filename']}"},
+        )
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+
+@app.get("/api/export/research/{task_id}")
+async def export_research(
+    task_id: str,
+    format: str = "markdown",
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    """Export a research report."""
+    result = export_research_report(db, task_id, current_user.id, format)
+    if not result:
+        raise HTTPException(status_code=404, detail="Research task not found")
+    log_usage(db, current_user.id, "export", "research", task_id, {"format": format})
+    return Response(
+        content=result["content"],
+        media_type=result["content_type"],
+        headers={"Content-Disposition": f"attachment; filename={result['filename']}"},
+    )
+
+
+@app.get("/api/export/knowledge-graph")
+async def export_kg(
+    format: str = "json",
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    """Export knowledge graph as JSON, CSV, or GraphML."""
+    try:
+        kg_engine = get_kg_engine()
+        result = export_knowledge_graph(kg_engine, format)
+        log_usage(db, current_user.id, "export", "kg", None, {"format": format})
+        return Response(
+            content=result["content"],
+            media_type=result["content_type"],
+            headers={"Content-Disposition": f"attachment; filename={result['filename']}"},
+        )
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+
+@app.get("/api/export/documents")
+async def export_docs(
+    format: str = "csv",
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    """Export documents list as CSV or JSON."""
+    try:
+        result = export_documents_list(db, format)
+        log_usage(db, current_user.id, "export", "documents", None, {"format": format})
+        return Response(
+            content=result["content"],
+            media_type=result["content_type"],
+            headers={"Content-Disposition": f"attachment; filename={result['filename']}"},
+        )
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+
+# ==================== KNOWLEDGE GRAPH FULL DATA (for visualization) ====================
+
+@app.get("/api/knowledge-graph/full")
+async def kg_full_graph(
+    max_nodes: int = 500,
+    current_user: User = Depends(get_current_user)
+):
+    """
+    Get the full knowledge graph data for interactive visualization.
+    Returns nodes and edges suitable for D3.js / Cytoscape rendering.
+    Inspired by LightRAG's graph visualization API.
+    """
+    kg_engine = get_kg_engine()
+    graph = kg_engine.graph
+
+    nodes = []
+    for node_name, data in list(graph.nodes(data=True))[:max_nodes]:
+        degree = graph.degree(node_name)
+        nodes.append({
+            "id": node_name,
+            "type": data.get("type", "CONCEPT"),
+            "source_files": data.get("source_files", []),
+            "degree": degree,
+        })
+
+    node_ids = {n["id"] for n in nodes}
+    edges = []
+    for u, v, data in graph.edges(data=True):
+        if u in node_ids and v in node_ids:
+            edges.append({
+                "source": u,
+                "target": v,
+                "relation": data.get("relation", "RELATED_TO"),
+                "source_file": data.get("source_file", ""),
+            })
+
+    return {
+        "nodes": nodes,
+        "edges": edges,
+        "total_nodes": graph.number_of_nodes(),
+        "total_edges": graph.number_of_edges(),
     }
