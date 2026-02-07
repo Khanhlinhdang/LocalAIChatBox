@@ -14,6 +14,27 @@ AttributeError: `np.float_` was removed in the NumPy 2.0 release
 
 ## 🔧 Làm ngay trên VPS:
 
+### Option 1: Tự động (Recommended) ⚡
+
+```bash
+ssh root@194.59.165.202
+cd ~/LocalAIChatBox
+git pull origin main
+
+# Chạy script tự động fix
+bash fix_numpy_error.sh
+```
+
+Script sẽ tự động:
+- ✅ Stop containers
+- ✅ Pull code mới
+- ✅ Rebuild với --no-cache
+- ✅ Start services
+- ✅ Verify ChromaDB & NumPy versions
+- ✅ Test health endpoint
+
+### Option 2: Manual (Step by step)
+
 ```bash
 # 1. Pull code mới có fix ChromaDB 0.5.3
 cd ~/LocalAIChatBox
@@ -32,7 +53,7 @@ docker-compose up -d
 docker-compose logs backend --tail=50 -f
 ```
 
-**⚠️ Lưu ý:** Phải dùng `--no-cache` để Docker không dùng lại layer cũ có NumPy 2.0!
+**⚠️ Lưu ý:** Phải dùng `--no-cache` để Docker không dùng lại layer cũ có ChromaDB 0.4.22!
 
 ## ✓ Expected logs (thành công):
 
