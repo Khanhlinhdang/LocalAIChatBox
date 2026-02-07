@@ -13,17 +13,24 @@ AttributeError: module 'bcrypt' has no attribute '__about__'
 ValueError: password cannot be longer than 72 bytes
 ```
 
+### 3. Docker Build Error:
+```
+failed to solve: process "/bin/sh -c pip install..." did not complete successfully
+```
+
 ## 🔍 Nguyên nhân:
 
 1. **NumPy 2.0**: ChromaDB 0.4.22 không hỗ trợ NumPy 2.0
 2. **Bcrypt 4.x**: passlib 1.7.4 không tương thích với bcrypt 4.0+ (đã thay đổi API)
+3. **ChromaDB 0.5.3**: Version này không tồn tại trên PyPI
 
 ## ✅ Giải pháp:
 
-- **Nâng cấp ChromaDB** lên version **0.5.3** (hỗ trợ NumPy 2.0)
-- Pin **NumPy 1.26.4** (stable version)
-- Pin **bcrypt 3.2.2** (tương thích với passlib 1.7.4)
-- **Removed local-deep-research dependency**
+- **ChromaDB**: Dùng version **0.4.22** (stable, đã test)
+- **NumPy**: Pin **<2.0** để tránh NumPy 2.0 error
+- **passlib**: Version **1.7.4** không có `[bcrypt]` extra
+- **bcrypt**: Pin **3.2.2** (tương thích với passlib 1.7.4)
+- **local-deep-research**: Đã remove (không còn cần thiết)
 
 > 📘 **Lưu ý:** Deep Research feature đã bị disable. Xem [REMOVED_LDR.md](REMOVED_LDR.md) để biết chi tiết.
 

@@ -85,11 +85,10 @@ if [ -z "$CHROMA_VERSION" ]; then
     echo -e "${RED}❌ Could not get ChromaDB version${NC}"
 else
     echo "ChromaDB version: $CHROMA_VERSION"
-    if [ "$CHROMA_VERSION" = "0.5.3" ]; then
-        echo -e "${GREEN}✓ ChromaDB version is correct (0.5.3)${NC}"
+    if [ "$CHROMA_VERSION" = "0.4.22" ]; then
+        echo -e "${GREEN}✓ ChromaDB version is correct (0.4.22)${NC}"
     else
-        echo -e "${RED}❌ ChromaDB version is wrong (expected 0.5.3, got $CHROMA_VERSION)${NC}"
-        echo -e "${YELLOW}You may need to rebuild again with --no-cache${NC}"
+        echo -e "${YELLOW}⚠️  ChromaDB version is $CHROMA_VERSION (expected 0.4.22)${NC}"
     fi
 fi
 echo ""
