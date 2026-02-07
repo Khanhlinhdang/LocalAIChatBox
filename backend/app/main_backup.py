@@ -1,22 +1,9 @@
-"""
-LocalAIChatBox - Main FastAPI Application
-Enhanced with multimodal RAG capabilities inspired by RAG-Anything.
-
-Features:
-- Multimodal document processing (PDF, DOCX, XLSX, PPTX, images, etc.)
-- Knowledge graph with multimodal entities
-- Hybrid query engine (text + multimodal + KG)
-- Vision model integration for image understanding
-- Batch document processing
-"""
-
-from fastapi import FastAPI, Depends, HTTPException, status, UploadFile, File, Form
+from fastapi import FastAPI, Depends, HTTPException, status, UploadFile, File
 from fastapi.middleware.cors import CORSMiddleware
 from sqlalchemy.orm import Session
 from typing import List, Optional
 from datetime import timedelta
 import shutil
-import json
 from pathlib import Path
 
 from app.database import get_db, init_db
@@ -25,15 +12,16 @@ from app.auth import (
     get_password_hash, verify_password, create_access_token,
     get_current_user, get_current_admin
 )
-from app.enhanced_rag_engine import get_rag_engine
+from app.rag_engine import get_rag_engine
 from app.knowledge_graph import get_kg_engine
+from app.document_processor import DocumentProcessor
 from app.research_routes import router as research_router
 from pydantic import BaseModel, EmailStr
 
 app = FastAPI(
-    title="LocalAIChatBox API",
-    version="3.0.0",
-    description="Multimodal RAG Chat System with Knowledge Graph & Deep Research"
+    title="Company RAG Chat API",
+    version="2.0.0",
+    description="Private company knowledge base chat system with deep research"
 )
 
 app.add_middleware(
@@ -77,17 +65,7 @@ async def startup_event():
     except Exception as e:
         print(f"Warning: Deep Research Service init failed (non-fatal): {e}")
 
-    # Initialize enhanced RAG engine
-    try:
-        engine = get_rag_engine()
-        print(f"Enhanced Multimodal RAG Engine initialized")
-        info = engine.get_multimodal_info()
-        print(f"  Supported formats: {list(info['supported_formats'].keys())}")
-        print(f"  LLM: {info['llm_model']}, Vision: {info['vision_model']}")
-    except Exception as e:
-        print(f"Warning: Enhanced RAG Engine init failed (non-fatal): {e}")
-
-    print("LocalAIChatBox Server Started (v3.0 - Multimodal RAG)")
+    print("Company RAG Chat Server Started (v2.0 with Deep Research)")
 
 
 # ==================== SCHEMAS ====================
@@ -114,8 +92,6 @@ class ChatQuery(BaseModel):
     question: str
     use_context: bool = True
     use_knowledge_graph: bool = True
-    include_multimodal: bool = True
-    search_mode: str = "hybrid"
     k: int = 5
 
 
@@ -125,8 +101,6 @@ class ChatResponse(BaseModel):
     num_sources: int
     entities_found: Optional[List[dict]] = None
     graph_connections: Optional[int] = None
-    multimodal_results: Optional[int] = None
-    search_mode: Optional[str] = None
 
 
 class UserUpdate(BaseModel):
@@ -147,11 +121,21 @@ class PasswordChange(BaseModel):
 async def register(user_data: UserCreate, db: Session = Depends(get_db)):
     """Register a new user"""
     try:
+        # Check if username exists
         if db.query(User).filter(User.username == user_data.username).first():
-            raise HTTPException(status_code=400, detail="Username already exists")
-        if db.query(User).filter(User.email == user_data.email).first():
-            raise HTTPException(status_code=400, detail="Email already exists")
+            raise HTTPException(
+                status_code=400,
+                detail="Username already exists"
+            )
 
+        # Check if email exists
+        if db.query(User).filter(User.email == user_data.email).first():
+            raise HTTPException(
+                status_code=400,
+                detail="Email already exists"
+            )
+
+        # Create new user
         new_user = User(
             username=user_data.username,
             email=user_data.email,
@@ -160,11 +144,14 @@ async def register(user_data: UserCreate, db: Session = Depends(get_db)):
             is_admin=False,
             is_active=True
         )
+
         db.add(new_user)
         db.commit()
         db.refresh(new_user)
 
+        # Create access token
         access_token = create_access_token(data={"sub": new_user.username})
+
         return {
             "access_token": access_token,
             "token_type": "bearer",
@@ -181,30 +168,44 @@ async def register(user_data: UserCreate, db: Session = Depends(get_db)):
     except Exception as e:
         db.rollback()
         print(f"Registration error: {str(e)}")
-        raise HTTPException(status_code=500, detail=f"Registration failed: {str(e)}")
+        raise HTTPException(
+            status_code=500,
+            detail=f"Registration failed: {str(e)}"
+        )
 
 
 @app.post("/api/auth/login", response_model=TokenResponse)
 async def login(credentials: UserLogin, db: Session = Depends(get_db)):
     """Login user and return JWT token"""
     try:
+        # Find user by username
         user = db.query(User).filter(User.username == credentials.username).first()
+
         if not user:
             raise HTTPException(
                 status_code=status.HTTP_401_UNAUTHORIZED,
                 detail="Incorrect username or password",
                 headers={"WWW-Authenticate": "Bearer"}
             )
+
+        # Verify password
         if not verify_password(credentials.password, user.hashed_password):
             raise HTTPException(
                 status_code=status.HTTP_401_UNAUTHORIZED,
                 detail="Incorrect username or password",
                 headers={"WWW-Authenticate": "Bearer"}
             )
-        if not user.is_active:
-            raise HTTPException(status_code=403, detail="User account is disabled")
 
+        # Check if user is active
+        if not user.is_active:
+            raise HTTPException(
+                status_code=403,
+                detail="User account is disabled"
+            )
+
+        # Create access token
         access_token = create_access_token(data={"sub": user.username})
+
         return {
             "access_token": access_token,
             "token_type": "bearer",
@@ -220,7 +221,10 @@ async def login(credentials: UserLogin, db: Session = Depends(get_db)):
         raise
     except Exception as e:
         print(f"Login error: {str(e)}")
-        raise HTTPException(status_code=500, detail=f"Login failed: {str(e)}")
+        raise HTTPException(
+            status_code=500,
+            detail=f"Login failed: {str(e)}"
+        )
 
 
 @app.get("/api/auth/me")
@@ -242,12 +246,13 @@ async def change_password(
 ):
     if not verify_password(data.current_password, current_user.hashed_password):
         raise HTTPException(status_code=400, detail="Current password is incorrect")
+
     current_user.hashed_password = get_password_hash(data.new_password)
     db.commit()
     return {"message": "Password updated successfully"}
 
 
-# ==================== DOCUMENT ENDPOINTS (Enhanced Multimodal) ====================
+# ==================== DOCUMENT ENDPOINTS ====================
 
 @app.post("/api/documents/upload")
 async def upload_documents(
@@ -255,20 +260,8 @@ async def upload_documents(
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db)
 ):
-    """
-    Upload and process documents with multimodal content extraction.
-
-    Supports: PDF, DOCX, DOC, XLSX, XLS, PPTX, PPT, TXT, MD, CSV,
-              JPG, JPEG, PNG, BMP, TIFF, GIF, WEBP, HTML
-
-    Processing pipeline:
-    1. Parse document -> extract text, images, tables, equations
-    2. Chunk text -> store in vector DB
-    3. Process multimodal items -> generate descriptions via LLM/VLM
-    4. Store multimodal chunks -> vector DB
-    5. Extract entities -> knowledge graph
-    """
     rag_engine = get_rag_engine()
+    doc_processor = DocumentProcessor()
     documents_path = Path("/app/data/documents")
     documents_path.mkdir(parents=True, exist_ok=True)
 
@@ -281,39 +274,53 @@ async def upload_documents(
             shutil.copyfileobj(file.file, buffer)
 
         try:
-            # Use enhanced document processing pipeline
-            result = rag_engine.process_document_complete(
-                file_path=str(file_path),
-                doc_id=f"doc_{current_user.id}_{file.filename}",
-                filename=file.filename,
-                user_id=current_user.id,
-                username=current_user.username,
-                enable_multimodal=True,
-            )
+            result = doc_processor.process_file(str(file_path))
 
-            # Save to database
+            metadatas = [
+                {
+                    "filename": file.filename,
+                    "uploaded_by": current_user.username,
+                    "user_id": current_user.id,
+                    "chunk_id": i
+                }
+                for i in range(len(result["chunks"]))
+            ]
+
+            rag_engine.add_documents(result["chunks"], metadatas)
+
             db_document = DBDocument(
                 filename=file.filename,
                 original_filename=file.filename,
                 file_path=str(file_path),
                 file_size_mb=round(file_path.stat().st_size / (1024 * 1024), 2),
                 file_type=file_path.suffix,
-                num_chunks=result.get("text_chunks", 0),
+                num_chunks=result["num_chunks"],
                 uploaded_by=current_user.id,
                 is_indexed=True
             )
+
             db.add(db_document)
             db.commit()
             db.refresh(db_document)
 
+            # Extract entities for Knowledge Graph
+            kg_result = {"entities_added": 0, "relations_added": 0}
+            try:
+                kg_engine = get_kg_engine()
+                kg_result = kg_engine.add_document_to_graph(
+                    doc_id=str(db_document.id),
+                    filename=file.filename,
+                    chunks=result["chunks"]
+                )
+            except Exception as e:
+                print(f"Knowledge Graph extraction error (non-fatal): {e}")
+
             uploaded_files.append({
                 "filename": file.filename,
-                "chunks": result.get("text_chunks", 0),
-                "multimodal_items": result.get("multimodal_items", 0),
-                "entities": result.get("entities_added", 0),
-                "relations": result.get("relations_added", 0),
-                "content_types": result.get("content_types", {}),
-                "status": result.get("status", "success"),
+                "chunks": result["num_chunks"],
+                "entities": kg_result.get("entities_added", 0),
+                "relations": kg_result.get("relations_added", 0),
+                "status": "success"
             })
 
         except Exception as e:
@@ -332,6 +339,7 @@ async def list_documents(
     db: Session = Depends(get_db)
 ):
     documents = db.query(DBDocument).order_by(DBDocument.uploaded_at.desc()).all()
+
     return {
         "total": len(documents),
         "documents": [
@@ -359,10 +367,11 @@ async def delete_document(
     document = db.query(DBDocument).filter(DBDocument.id == doc_id).first()
     if not document:
         raise HTTPException(status_code=404, detail="Document not found")
+
     if not current_user.is_admin and document.uploaded_by != current_user.id:
         raise HTTPException(status_code=403, detail="Not authorized to delete this document")
 
-    # Remove from vector store (both text and multimodal)
+    # Remove from vector store
     rag_engine = get_rag_engine()
     removed = rag_engine.delete_document_chunks(document.filename)
 
@@ -381,10 +390,10 @@ async def delete_document(
     db.delete(document)
     db.commit()
 
-    return {"message": f"Document deleted, chunks removed from knowledge base"}
+    return {"message": f"Document deleted, {removed} chunks removed from knowledge base"}
 
 
-# ==================== CHAT ENDPOINTS (Enhanced Multimodal) ====================
+# ==================== CHAT ENDPOINTS ====================
 
 @app.post("/api/chat/query", response_model=ChatResponse)
 async def chat_query(
@@ -392,24 +401,31 @@ async def chat_query(
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db)
 ):
-    """
-    Query the knowledge base with multimodal RAG.
-    Searches across text, images, tables, and equations.
-    """
-    from app.multimodal.query_engine import QueryEngine
-
     rag_engine = get_rag_engine()
-    query_engine = QueryEngine(rag_engine)
 
-    result = query_engine.query(
-        question=query.question,
-        mode=query.search_mode,
-        k=query.k,
-        use_knowledge_graph=query.use_knowledge_graph,
-        include_multimodal=query.include_multimodal,
-    )
+    # Get Knowledge Graph context if enabled
+    graph_context = ""
+    entities_found = []
+    graph_connections = 0
 
-    # Save conversation
+    if query.use_knowledge_graph:
+        try:
+            kg_engine = get_kg_engine()
+            graph_context = kg_engine.get_graph_context(query.question)
+            entities = kg_engine.find_entities(query.question)
+            entities_found = entities[:5]
+            for e in entities_found[:3]:
+                sub = kg_engine.get_entity_subgraph(e['name'], max_hops=2)
+                graph_connections += len(sub.get('edges', []))
+        except Exception as e:
+            print(f"Knowledge Graph error (non-fatal): {e}")
+
+    result = rag_engine.query_with_context(query.question, k=query.k, graph_context=graph_context)
+
+    # Add KG info to result
+    result["entities_found"] = entities_found
+    result["graph_connections"] = graph_connections
+
     conversation = Conversation(
         user_id=current_user.id,
         question=query.question,
@@ -417,6 +433,7 @@ async def chat_query(
         sources_used=str(result.get("num_sources", 0)),
         context_used=query.use_context
     )
+
     db.add(conversation)
     db.commit()
 
@@ -454,55 +471,11 @@ async def clear_chat_history(
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db)
 ):
-    db.query(Conversation).filter(Conversation.user_id == current_user.id).delete()
+    db.query(Conversation)\
+        .filter(Conversation.user_id == current_user.id)\
+        .delete()
     db.commit()
     return {"message": "Chat history cleared"}
-
-
-# ==================== MULTIMODAL INFO ENDPOINT ====================
-
-@app.get("/api/multimodal/info")
-async def get_multimodal_info(
-    current_user: User = Depends(get_current_user),
-):
-    """Get information about multimodal processing capabilities."""
-    rag_engine = get_rag_engine()
-    return rag_engine.get_multimodal_info()
-
-
-@app.get("/api/multimodal/stats")
-async def get_multimodal_stats(
-    current_user: User = Depends(get_current_user),
-):
-    """Get multimodal processing statistics."""
-    rag_engine = get_rag_engine()
-    stats = rag_engine.get_stats()
-    return stats
-
-
-# ==================== SEARCH ENDPOINT ====================
-
-@app.get("/api/search")
-async def search_documents(
-    q: str,
-    k: int = 10,
-    include_multimodal: bool = True,
-    current_user: User = Depends(get_current_user),
-):
-    """
-    Search the knowledge base.
-    Returns raw search results without LLM answer generation.
-    """
-    from app.multimodal.query_engine import QueryEngine
-
-    rag_engine = get_rag_engine()
-    query_engine = QueryEngine(rag_engine)
-
-    return query_engine.get_search_results_only(
-        question=q,
-        k=k,
-        include_multimodal=include_multimodal,
-    )
 
 
 # ==================== ADMIN ENDPOINTS ====================
@@ -608,68 +581,45 @@ async def delete_user(
 
 @app.get("/api/health")
 async def health_check(db: Session = Depends(get_db)):
-    """Health check with service status"""
+    """Health check endpoint with database connectivity test"""
     health_status = {
         "status": "healthy",
-        "service": "LocalAIChatBox",
-        "version": "3.0 - Multimodal RAG",
+        "service": "Company RAG Chat",
+        "version": "2.0",
         "services": {}
     }
-
+    
     # Check database
     try:
-        from sqlalchemy import text
-        db.execute(text("SELECT 1"))
+        db.execute("SELECT 1")
         health_status["services"]["database"] = "ok"
     except Exception as e:
         health_status["services"]["database"] = f"error: {str(e)}"
         health_status["status"] = "unhealthy"
-
-    # Check Ollama
+    
+    # Check Ollama (optional)
     try:
         import os
         import requests
         ollama_host = os.getenv("OLLAMA_HOST", "http://ollama:11434")
         response = requests.get(f"{ollama_host}/api/tags", timeout=2)
         if response.status_code == 200:
-            models = [m["name"] for m in response.json().get("models", [])]
-            health_status["services"]["ollama"] = {"status": "ok", "models": models}
+            health_status["services"]["ollama"] = "ok"
         else:
             health_status["services"]["ollama"] = "unreachable"
-    except Exception:
+    except:
         health_status["services"]["ollama"] = "unreachable"
-
-    # Check RAG Engine
-    try:
-        rag_engine = get_rag_engine()
-        stats = rag_engine.get_stats()
-        health_status["services"]["rag_engine"] = {
-            "status": "ok",
-            "text_chunks": stats.get("text_chunks", 0),
-            "multimodal_chunks": stats.get("multimodal_chunks", 0),
-        }
-    except Exception as e:
-        health_status["services"]["rag_engine"] = f"error: {str(e)}"
-
-    # Check Knowledge Graph
-    try:
-        kg_engine = get_kg_engine()
-        kg_stats = kg_engine.get_stats()
-        health_status["services"]["knowledge_graph"] = {
-            "status": "ok",
-            "nodes": kg_stats.get("total_nodes", 0),
-            "edges": kg_stats.get("total_edges", 0),
-        }
-    except Exception as e:
-        health_status["services"]["knowledge_graph"] = f"error: {str(e)}"
-
+    
     return health_status
 
 
 # ==================== KNOWLEDGE GRAPH ENDPOINTS ====================
 
 @app.get("/api/knowledge-graph/stats")
-async def kg_stats(current_user: User = Depends(get_current_user)):
+async def kg_stats(
+    current_user: User = Depends(get_current_user)
+):
+    """Get Knowledge Graph statistics"""
     try:
         kg_engine = get_kg_engine()
         return kg_engine.get_stats()
@@ -678,14 +628,21 @@ async def kg_stats(current_user: User = Depends(get_current_user)):
 
 
 @app.get("/api/knowledge-graph/entities")
-async def kg_list_entities(current_user: User = Depends(get_current_user)):
+async def kg_list_entities(
+    current_user: User = Depends(get_current_user)
+):
+    """List all entities in the Knowledge Graph"""
     kg_engine = get_kg_engine()
     entities = kg_engine.get_all_entities()
     return {"total": len(entities), "entities": entities}
 
 
 @app.get("/api/knowledge-graph/search")
-async def kg_search_entities(q: str, current_user: User = Depends(get_current_user)):
+async def kg_search_entities(
+    q: str,
+    current_user: User = Depends(get_current_user)
+):
+    """Search for entities by name"""
     kg_engine = get_kg_engine()
     entities = kg_engine.find_entities(q)
     return {"query": q, "results": entities}
@@ -697,6 +654,7 @@ async def kg_get_entity(
     hops: int = 2,
     current_user: User = Depends(get_current_user)
 ):
+    """Get subgraph around a specific entity"""
     kg_engine = get_kg_engine()
     subgraph = kg_engine.get_entity_subgraph(entity_name, max_hops=min(hops, 3))
     return subgraph
@@ -711,6 +669,7 @@ async def kg_rebuild(
     kg_engine = get_kg_engine()
     kg_engine.clear()
 
+    doc_processor = DocumentProcessor()
     documents = db.query(DBDocument).filter(DBDocument.is_indexed == True).all()
 
     results = []
@@ -721,16 +680,17 @@ async def kg_rebuild(
                 results.append({"filename": doc.filename, "status": "file_not_found"})
                 continue
 
-            from app.multimodal.document_parser import DocumentParserService
-            parser = DocumentParserService()
-            parsed = parser.parse_document(str(file_path))
-
+            processed = doc_processor.process_file(str(file_path))
             kg_result = kg_engine.add_document_to_graph(
                 doc_id=str(doc.id),
                 filename=doc.filename,
-                chunks=parsed["chunks"][:20]
+                chunks=processed["chunks"]
             )
-            results.append({"filename": doc.filename, "status": "success", **kg_result})
+            results.append({
+                "filename": doc.filename,
+                "status": "success",
+                **kg_result
+            })
         except Exception as e:
             results.append({"filename": doc.filename, "status": "error", "error": str(e)})
 
@@ -740,49 +700,4 @@ async def kg_rebuild(
         "documents_processed": len(results),
         "results": results,
         "graph_stats": stats
-    }
-
-
-# ==================== BATCH PROCESSING ENDPOINT ====================
-
-@app.post("/api/documents/batch-process")
-async def batch_process_documents(
-    current_user: User = Depends(get_current_admin),
-    db: Session = Depends(get_db)
-):
-    """Re-process all existing documents with multimodal extraction (admin only)."""
-    rag_engine = get_rag_engine()
-    documents = db.query(DBDocument).filter(DBDocument.is_indexed == True).all()
-
-    results = []
-    for doc in documents:
-        try:
-            file_path = Path(doc.file_path)
-            if not file_path.exists():
-                results.append({"filename": doc.filename, "status": "file_not_found"})
-                continue
-
-            result = rag_engine.process_document_complete(
-                file_path=str(file_path),
-                doc_id=f"doc_{doc.uploaded_by}_{doc.filename}",
-                filename=doc.filename,
-                user_id=doc.uploaded_by,
-                username=doc.uploader.username if doc.uploader else "system",
-                enable_multimodal=True,
-            )
-
-            results.append({
-                "filename": doc.filename,
-                "status": result.get("status", "success"),
-                "text_chunks": result.get("text_chunks", 0),
-                "multimodal_items": result.get("multimodal_items", 0),
-                "entities": result.get("entities_added", 0),
-            })
-        except Exception as e:
-            results.append({"filename": doc.filename, "status": "error", "error": str(e)})
-
-    return {
-        "message": "Batch processing complete",
-        "documents_processed": len(results),
-        "results": results,
     }

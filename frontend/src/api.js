@@ -42,8 +42,15 @@ export const changePassword = (currentPassword, newPassword) =>
   api.put('/auth/password', { current_password: currentPassword, new_password: newPassword });
 
 // Chat
-export const sendChatQuery = (question, useContext = true, useKnowledgeGraph = true, k = 5) =>
-  api.post('/chat/query', { question, use_context: useContext, use_knowledge_graph: useKnowledgeGraph, k });
+export const sendChatQuery = (question, useContext = true, useKnowledgeGraph = true, k = 5, includeMultimodal = true, searchMode = 'hybrid') =>
+  api.post('/chat/query', {
+    question,
+    use_context: useContext,
+    use_knowledge_graph: useKnowledgeGraph,
+    include_multimodal: includeMultimodal,
+    search_mode: searchMode,
+    k,
+  });
 
 export const getChatHistory = (limit = 50) =>
   api.get(`/chat/history?limit=${limit}`);
@@ -83,6 +90,21 @@ export const deleteUser = (userId) =>
 // Health
 export const healthCheck = () =>
   api.get('/health');
+
+// Multimodal
+export const getMultimodalInfo = () =>
+  api.get('/multimodal/info');
+
+export const getMultimodalStats = () =>
+  api.get('/multimodal/stats');
+
+// Search
+export const searchDocuments = (query, k = 10, includeMultimodal = true) =>
+  api.get(`/search?q=${encodeURIComponent(query)}&k=${k}&include_multimodal=${includeMultimodal}`);
+
+// Batch Processing (admin)
+export const batchProcessDocuments = () =>
+  api.post('/documents/batch-process');
 
 // Knowledge Graph
 export const getKGStats = () =>

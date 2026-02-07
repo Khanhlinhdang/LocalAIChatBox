@@ -8,6 +8,7 @@ function ChatPage({ user }) {
   const [loading, setLoading] = useState(false);
   const [historyLoaded, setHistoryLoaded] = useState(false);
   const [useKG, setUseKG] = useState(true);
+  const [useMultimodal, setUseMultimodal] = useState(true);
   const messagesEndRef = useRef(null);
   const textareaRef = useRef(null);
 
@@ -62,8 +63,8 @@ function ChatPage({ user }) {
     setLoading(true);
 
     try {
-      const response = await sendChatQuery(question, true, useKG);
-      const { answer, sources, num_sources, entities_found, graph_connections } = response.data;
+      const response = await sendChatQuery(question, true, useKG, 5, useMultimodal);
+      const { answer, sources, num_sources, entities_found, graph_connections, multimodal_results, search_mode } = response.data;
       setMessages((prev) => [
         ...prev,
         {
@@ -73,6 +74,8 @@ function ChatPage({ user }) {
           numSources: num_sources,
           entitiesFound: entities_found || [],
           graphConnections: graph_connections || 0,
+          multimodalResults: multimodal_results || 0,
+          searchMode: search_mode || 'hybrid',
         },
       ]);
     } catch (err) {
@@ -171,7 +174,10 @@ function ChatPage({ user }) {
                 {msg.sources && msg.sources.length > 0 && (
                   <div className="message-sources">
                     <details>
-                      <summary>Sources ({msg.numSources} documents used)</summary>
+                      <summary>
+                        Sources ({msg.numSources} documents used)
+                        {msg.multimodalResults > 0 && ` | ${msg.multimodalResults} multimodal items`}
+                      </summary>
                       {msg.sources.map((source, i) => (
                         <div key={i} className="source-item">
                           {source.length > 200 ? source.substring(0, 200) + '...' : source}
@@ -218,6 +224,18 @@ function ChatPage({ user }) {
               <line x1="18" y1="17" x2="14.5" y2="13.5"/>
             </svg>
             {useKG ? 'KG-RAG' : 'Basic RAG'}
+          </button>
+          <button
+            className={`mode-btn ${useMultimodal ? 'active' : ''}`}
+            onClick={() => setUseMultimodal(!useMultimodal)}
+            title={useMultimodal ? 'Multimodal search enabled - searching images, tables, equations' : 'Text-only search - click to include multimodal content'}
+          >
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+              <rect x="3" y="3" width="18" height="18" rx="2" ry="2"/>
+              <circle cx="8.5" cy="8.5" r="1.5"/>
+              <polyline points="21 15 16 10 5 21"/>
+            </svg>
+            {useMultimodal ? 'Multimodal' : 'Text Only'}
           </button>
         </div>
         <div className="chat-input-wrapper">

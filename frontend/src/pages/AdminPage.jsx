@@ -1,8 +1,9 @@
 import React, { useState, useEffect } from 'react';
-import { getAdminStats, getAdminUsers, updateUser, deleteUser } from '../api';
+import { getAdminStats, getAdminUsers, updateUser, deleteUser, batchProcessDocuments } from '../api';
 
 function AdminPage({ user }) {
   const [stats, setStats] = useState(null);
+  const [batchProcessing, setBatchProcessing] = useState(false);
   const [users, setUsers] = useState([]);
   const [loading, setLoading] = useState(true);
 
@@ -56,6 +57,20 @@ function AdminPage({ user }) {
     }
   };
 
+  const handleBatchProcess = async () => {
+    if (!window.confirm('Re-process all documents with multimodal extraction? This may take a while.')) return;
+    setBatchProcessing(true);
+    try {
+      const res = await batchProcessDocuments();
+      alert(`Batch processing complete: ${res.data.documents_processed} documents processed`);
+      fetchData();
+    } catch (err) {
+      alert(err.response?.data?.detail || 'Batch processing failed');
+    } finally {
+      setBatchProcessing(false);
+    }
+  };
+
   if (loading) {
     return (
       <div className="admin-page">
@@ -85,8 +100,12 @@ function AdminPage({ user }) {
             <div className="stat-label">Documents</div>
           </div>
           <div className="stat-card">
-            <div className="stat-value">{stats.total_chunks}</div>
-            <div className="stat-label">Knowledge Base Chunks</div>
+            <div className="stat-value">{stats.total_chunks || 0}</div>
+            <div className="stat-label">Text Chunks</div>
+          </div>
+          <div className="stat-card">
+            <div className="stat-value">{stats.multimodal_chunks || 0}</div>
+            <div className="stat-label">Multimodal Chunks</div>
           </div>
           <div className="stat-card">
             <div className="stat-value">{stats.conversations}</div>
@@ -110,6 +129,22 @@ function AdminPage({ user }) {
           )}
         </div>
       )}
+
+      <div className="admin-section">
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 16 }}>
+          <h2 style={{ margin: 0 }}>Multimodal Processing</h2>
+          <button
+            className="btn btn-primary"
+            onClick={handleBatchProcess}
+            disabled={batchProcessing}
+          >
+            {batchProcessing ? 'Processing...' : 'Re-process All Documents'}
+          </button>
+        </div>
+        <p style={{ fontSize: 13, color: 'var(--text-secondary)', marginBottom: 8 }}>
+          Re-process all existing documents with multimodal content extraction (images, tables, equations).
+        </p>
+      </div>
 
       <div className="admin-section">
         <h2>User Management</h2>

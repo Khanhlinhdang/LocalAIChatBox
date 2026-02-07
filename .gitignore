@@ -214,6 +214,11 @@ nul
 data/database/*
 data/documents/*
 data/vector_store/*
+data/parser_output/*
 !data/database/.gitkeep
 !data/documents/.gitkeep
 !data/vector_store/.gitkeep
+!data/parser_output/.gitkeep
+
+# Reference projects
+RAG-Anything-main/

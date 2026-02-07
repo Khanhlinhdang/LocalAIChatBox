@@ -61,9 +61,12 @@ services:
       - VECTOR_STORE_PATH=/app/data/vector_store
       - DOCUMENTS_PATH=/app/data/documents
       - SEARXNG_URL=http://searxng:8080
+      - PARSER_OUTPUT_DIR=/app/data/parser_output
+      - OLLAMA_VISION_MODEL=llava
     volumes:
       - ./data/vector_store:/app/data/vector_store
       - ./data/documents:/app/data/documents
+      - ./data/parser_output:/app/data/parser_output
       - sentence_transformer_cache:/home/appuser/.cache/torch/sentence_transformers
     ports:
       - "8001:8000"

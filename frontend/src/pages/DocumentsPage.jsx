@@ -54,8 +54,20 @@ function DocumentsPage({ user }) {
       'application/pdf': ['.pdf'],
       'application/msword': ['.doc'],
       'application/vnd.openxmlformats-officedocument.wordprocessingml.document': ['.docx'],
+      'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet': ['.xlsx'],
+      'application/vnd.ms-excel': ['.xls'],
+      'application/vnd.openxmlformats-officedocument.presentationml.presentation': ['.pptx'],
+      'application/vnd.ms-powerpoint': ['.ppt'],
       'text/plain': ['.txt'],
       'text/markdown': ['.md'],
+      'text/csv': ['.csv'],
+      'text/html': ['.html', '.htm'],
+      'image/jpeg': ['.jpg', '.jpeg'],
+      'image/png': ['.png'],
+      'image/bmp': ['.bmp'],
+      'image/tiff': ['.tiff', '.tif'],
+      'image/gif': ['.gif'],
+      'image/webp': ['.webp'],
     },
     disabled: uploading,
   });
@@ -86,7 +98,7 @@ function DocumentsPage({ user }) {
           <line x1="12" y1="3" x2="12" y2="15" />
         </svg>
         <h3>{isDragActive ? 'Drop files here' : 'Drag & drop files or click to upload'}</h3>
-        <p>Supported formats: PDF, DOCX, DOC, TXT, MD (max 100 MB per file)</p>
+        <p>Supported: PDF, DOCX, XLSX, PPTX, TXT, MD, CSV, HTML, Images (JPG, PNG, BMP, TIFF, GIF, WEBP)</p>
       </div>
 
       {uploading && (
@@ -118,7 +130,7 @@ function DocumentsPage({ user }) {
               }}
             >
               {result.filename}: {result.status === 'success'
-                ? `Processed successfully (${result.chunks} chunks)`
+                ? `${result.chunks} text chunks${result.multimodal_items ? `, ${result.multimodal_items} multimodal items` : ''}${result.entities ? `, ${result.entities} entities` : ''}`
                 : `Error - ${result.error}`}
             </div>
           ))}

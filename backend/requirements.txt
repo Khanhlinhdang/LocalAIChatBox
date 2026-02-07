@@ -2,14 +2,16 @@ fastapi
 uvicorn[standard]
 python-multipart
 python-jose[cryptography]
-passlib
+passlib==1.7.4
+bcrypt==3.2.2
 python-dotenv
 sqlalchemy
 psycopg2-binary
 alembic
 
 # RAG components
-chromadb
+chromadb==0.4.22
+numpy<2.0
 
 # LangChain (shared with LDR)
 langchain
@@ -23,6 +25,12 @@ sentence-transformers
 pymupdf
 python-docx
 Pillow
+
+# Multimodal document processing
+openpyxl
+python-pptx
+beautifulsoup4
+lxml
 
 # Knowledge Graph
 networkx
