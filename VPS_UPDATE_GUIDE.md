@@ -3,6 +3,8 @@
 ## ⚠️ Vấn đề đã fix:
 - **FAISS library** không tương thích với CPU của VPS (thiếu AVX2)
 - Đã thay thế bằng **ChromaDB** - pure Python, không yêu cầu AVX2
+- **NumPy 2.0 compatibility** - ChromaDB 0.4.22 không tương thích với NumPy 2.0
+- Đã pin NumPy version về `<2.0` để tránh AttributeError
 
 ## 📋 Các bước thực hiện trên VPS
 
@@ -29,13 +31,15 @@ git pull origin main
 ```
 From https://github.com/Khanhlinhdang/LocalAIChatBox
  * branch            main       -> FETCH_HEAD
-Updating e898b01..fbc2d2f
+Updating xxxxxxx..xxxxxxx
 Fast-forward
  backend/app/rag_engine.py              | 442 +++++++++++++++++++++
  backend/app/rag_engine_faiss_backup.py | 224 +++++++++++
- backend/requirements.txt               |   2 +-
- 3 files changed, 442 insertions(+), 224 deletions(-)
+ backend/requirements.txt               |   4 +-
+ 3 files changed
 ```
+
+> **⚠️ Important:** Code đã được fix thêm lỗi NumPy 2.0 compatibility!
 
 ### Bước 4: Rebuild backend image
 
@@ -128,7 +132,24 @@ Mở browser và truy cập: **http://194.59.165.202:81**
 
 ## 🔄 Nếu vẫn gặp lỗi
 
-### Lỗi 1: Backend vẫn không start
+### Lỗi 1: NumPy 2.0 compatibility error
+
+**Error message:**
+```
+AttributeError: `np.float_` was removed in the NumPy 2.0 release
+```
+
+**Nguyên nhân:** ChromaDB 0.4.22 không tương thích với NumPy 2.0
+
+**Giải pháp:** Đã được fix trong requirements.txt (numpy<2.0)
+
+```bash
+# Rebuild backend với --no-cache để clear layer cũ
+docker-compose build --no-cache backend
+docker-compose up -d backend
+```
+
+### Lỗi 2: Backend vẫn không start
 
 ```bash
 # Xem logs chi tiết
@@ -140,7 +161,7 @@ docker-compose build --no-cache
 docker-compose up -d
 ```
 
-### Lỗi 2: ChromaDB error
+### Lỗi 3: ChromaDB error
 
 ```bash
 # Xóa ChromaDB data cũ (nếu có)
@@ -150,7 +171,7 @@ rm -rf data/vector_store/*
 docker-compose restart backend
 ```
 
-### Lỗi 3: Database connection error
+### Lỗi 4: Database connection error
 
 ```bash
 # Restart postgres trước
@@ -161,7 +182,7 @@ sleep 10
 docker-compose restart backend
 ```
 
-### Lỗi 4: Port conflict
+### Lỗi 5: Port conflict
 
 ```bash
 # Kiểm tra port đang bị chiếm
