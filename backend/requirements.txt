@@ -9,7 +9,7 @@ psycopg2-binary==2.9.9
 alembic==1.13.1
 
 # RAG components
-faiss-cpu==1.7.4
+chromadb==0.4.22
 numpy==1.26.3
 
 # LangChain (shared with LDR)
