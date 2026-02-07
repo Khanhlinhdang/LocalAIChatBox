@@ -1,0 +1,109 @@
+version: '3.8'
+
+services:
+  # ==================== PostgreSQL ====================
+  postgres:
+    image: postgres:16-alpine
+    container_name: ragchat-postgres
+    environment:
+      POSTGRES_DB: ragdb
+      POSTGRES_USER: raguser
+      POSTGRES_PASSWORD: ragpassword
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    ports:
+      - "5432:5432"
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U raguser -d ragdb"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # ==================== Ollama ====================
+  ollama:
+    image: ollama/ollama:latest
+    container_name: ragchat-ollama
+    volumes:
+      - ollama_data:/root/.ollama
+    ports:
+      - "11434:11434"
+    restart: unless-stopped
+    # Uncomment the following for GPU support:
+    # deploy:
+    #   resources:
+    #     reservations:
+    #       devices:
+    #         - driver: nvidia
+    #           count: all
+    #           capabilities: [gpu]
+
+  # ==================== SearXNG (Meta Search Engine) ====================
+  searxng:
+    image: searxng/searxng:latest
+    container_name: ragchat-searxng
+    volumes:
+      - ./searxng:/etc/searxng:rw
+    ports:
+      - "8080:8080"
+    restart: unless-stopped
+
+  # ==================== Backend (FastAPI + LDR) ====================
+  backend:
+    build:
+      context: .
+      dockerfile: backend/Dockerfile
+    container_name: ragchat-backend
+    user: "1000:1000"
+    env_file:
+      - ./backend/.env
+    environment:
+      - DATABASE_URL=postgresql://raguser:ragpassword@postgres:5432/ragdb
+      - OLLAMA_HOST=http://ollama:11434
+      - VECTOR_STORE_PATH=/app/data/vector_store
+      - DOCUMENTS_PATH=/app/data/documents
+      - SEARXNG_URL=http://searxng:8080
+    volumes:
+      - ./data/vector_store:/app/data/vector_store
+      - ./data/documents:/app/data/documents
+      - sentence_transformer_cache:/home/appuser/.cache/torch/sentence_transformers
+    ports:
+      - "8000:8000"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      ollama:
+        condition: service_started
+      searxng:
+        condition: service_started
+    restart: unless-stopped
+
+  # ==================== Frontend (React) ====================
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+    container_name: ragchat-frontend
+    ports:
+      - "3000:3000"
+    depends_on:
+      - backend
+    restart: unless-stopped
+
+  # ==================== Nginx Reverse Proxy ====================
+  nginx:
+    image: nginx:alpine
+    container_name: ragchat-nginx
+    ports:
+      - "80:80"
+    volumes:
+      - ./nginx/nginx.conf:/etc/nginx/conf.d/default.conf:ro
+    depends_on:
+      - backend
+      - frontend
+    restart: unless-stopped
+
+volumes:
+  postgres_data:
+  ollama_data:
+  sentence_transformer_cache:

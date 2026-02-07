@@ -205,3 +205,15 @@ cython_debug/
 marimo/_static/
 marimo/_lsp/
 __marimo__/
+
+# Temporary files
+tmpclaude-*-cwd
+nul
+
+# Data directories
+data/database/*
+data/documents/*
+data/vector_store/*
+!data/database/.gitkeep
+!data/documents/.gitkeep
+!data/vector_store/.gitkeep
