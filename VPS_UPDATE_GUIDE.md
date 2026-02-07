@@ -3,8 +3,8 @@
 ## ⚠️ Vấn đề đã fix:
 - **FAISS library** không tương thích với CPU của VPS (thiếu AVX2)
 - Đã thay thế bằng **ChromaDB** - pure Python, không yêu cầu AVX2
-- **NumPy 2.0 compatibility** - ChromaDB 0.4.22 không tương thích với NumPy 2.0
-- Đã pin NumPy version về `<2.0` để tránh AttributeError
+- **NumPy 2.0 compatibility** - Nâng cấp ChromaDB lên **0.5.3** (hỗ trợ NumPy 2.0)
+- Pin NumPy về **1.26.4** (stable version)
 
 ## 📋 Các bước thực hiện trên VPS
 
@@ -33,13 +33,13 @@ From https://github.com/Khanhlinhdang/LocalAIChatBox
  * branch            main       -> FETCH_HEAD
 Updating xxxxxxx..xxxxxxx
 Fast-forward
- backend/app/rag_engine.py              | 442 +++++++++++++++++++++
- backend/app/rag_engine_faiss_backup.py | 224 +++++++++++
- backend/requirements.txt               |   4 +-
+ backend/app/rag_engine.py              | 442 lines
+ backend/app/rag_engine_faiss_backup.py | 224 lines
+ backend/requirements.txt               | Changed (ChromaDB 0.5.3)
  3 files changed
 ```
 
-> **⚠️ Important:** Code đã được fix thêm lỗi NumPy 2.0 compatibility!
+> **⚠️ Important:** Code đã được nâng cấp ChromaDB lên 0.5.3 để fix NumPy compatibility!
 
 ### Bước 4: Rebuild backend image
 
@@ -139,14 +139,19 @@ Mở browser và truy cập: **http://194.59.165.202:81**
 AttributeError: `np.float_` was removed in the NumPy 2.0 release
 ```
 
-**Nguyên nhân:** ChromaDB 0.4.22 không tương thích với NumPy 2.0
+**Nguyên nhân:** Docker vẫn dùng cached layer với ChromaDB 0.4.22 (không hỗ trợ NumPy 2.0)
 
-**Giải pháp:** Đã được fix trong requirements.txt (numpy<2.0)
+**Giải pháp:** Đã nâng cấp lên ChromaDB 0.5.3
 
 ```bash
-# Rebuild backend với --no-cache để clear layer cũ
+# PHẢI dùng --no-cache để xóa layer cũ
+docker-compose down
 docker-compose build --no-cache backend
-docker-compose up -d backend
+docker-compose up -d
+
+# Verify ChromaDB version
+docker-compose exec backend pip show chromadb | grep Version
+# Expected: Version: 0.5.3
 ```
 
 ### Lỗi 2: Backend vẫn không start

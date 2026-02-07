@@ -1,30 +1,38 @@
-# 🚨 QUICK FIX - NumPy 2.0 Error
+# 🚨 QUICK FIX - NumPy 2.0 Compatibility Error
 
 ## ❌ Lỗi gặp phải:
 ```
 AttributeError: `np.float_` was removed in the NumPy 2.0 release
 ```
 
-## ✅ Đã fix:
-- Pin NumPy về version `<2.0` trong requirements.txt
-- ChromaDB 0.4.22 chỉ hỗ trợ NumPy 1.x
+**Nguyên nhân:** ChromaDB 0.4.22 không hỗ trợ NumPy 2.0
+
+## ✅ Giải pháp:
+- **Nâng cấp ChromaDB** lên version **0.5.3** (hỗ trợ NumPy 2.0)
+- Pin NumPy về **1.26.4** (stable version)
+- Code đã được cập nhật và test với ChromaDB 0.5.3
 
 ## 🔧 Làm ngay trên VPS:
 
 ```bash
-# 1. Pull code mới có fix
+# 1. Pull code mới có fix ChromaDB 0.5.3
 cd ~/LocalAIChatBox
 git pull origin main
 
-# 2. Rebuild backend với --no-cache (QUAN TRỌNG!)
+# 2. Stop containers
+docker-compose down
+
+# 3. XÓA Docker build cache cũ (QUAN TRỌNG!)
 docker-compose build --no-cache backend
 
-# 3. Start lại
+# 4. Start lại tất cả services
 docker-compose up -d
 
-# 4. Kiểm tra logs
-docker-compose logs backend --tail=30 -f
+# 5. Kiểm tra logs (chờ 10-15 giây để backend khởi động)
+docker-compose logs backend --tail=50 -f
 ```
+
+**⚠️ Lưu ý:** Phải dùng `--no-cache` để Docker không dùng lại layer cũ có NumPy 2.0!
 
 ## ✓ Expected logs (thành công):
 
