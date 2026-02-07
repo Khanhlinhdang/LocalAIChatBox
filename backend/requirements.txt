@@ -2,16 +2,16 @@ fastapi==0.109.0
 uvicorn[standard]==0.27.0
 python-multipart==0.0.6
 python-jose[cryptography]==3.3.0
-passlib[bcrypt]==1.7.4
-bcrypt==3.2.2  # Pin to 3.x for passlib 1.7.4 compatibility
+passlib==1.7.4
+bcrypt==3.2.2  # Must be 3.x for passlib 1.7.4 compatibility, pin AFTER passlib
 python-dotenv==1.0.0
 sqlalchemy==2.0.25
 psycopg2-binary==2.9.9
 alembic==1.13.1
 
 # RAG components
-chromadb==0.5.3  # Version 0.5.3 supports NumPy 2.0
-numpy==1.26.4  # Pin to specific stable version
+chromadb==0.4.22  # Stable version, requires NumPy 1.x
+numpy>=1.21.0,<2.0  # ChromaDB 0.4.22 not compatible with NumPy 2.0
 
 # LangChain (shared with LDR)
 langchain>=0.2.0
