@@ -509,4 +509,41 @@ export const editLightRAGEntity = (entityName, data) =>
 export const editLightRAGRelation = (source, target, data) =>
   api.post('/lightrag/graph/relation/edit', { source, target, ...data });
 
+
+// ==================== LDR (Local Deep Research) API ====================
+
+// Health & Info
+export const getLDRHealth = () => api.get('/ldr/health');
+export const getLDRStrategies = (category) =>
+  api.get('/ldr/strategies', { params: category ? { category } : {} });
+export const getLDRSearchEngines = () => api.get('/ldr/search-engines');
+
+// Research
+export const startLDRResearch = (query, strategy = 'source-based', options = {}) =>
+  api.post('/ldr/research/start', {
+    query, strategy,
+    research_mode: options.research_mode || 'detailed',
+    search_engine: options.search_engine || 'auto',
+    iterations: options.iterations || 3,
+    questions_per_iteration: options.questions_per_iteration || 3,
+    overrides: options.overrides || null,
+  });
+
+export const getLDRProgress = (taskId) => api.get(`/ldr/research/${taskId}/progress`);
+export const getLDRResult = (taskId) => api.get(`/ldr/research/${taskId}/result`);
+
+// Follow-up Research
+export const startLDRFollowUp = (parentTaskId, query) =>
+  api.post('/ldr/research/follow-up', { parent_task_id: parentTaskId, query });
+
+// News & Subscriptions
+export const getLDRNewsFeed = (topics, limit = 20) =>
+  api.get('/ldr/news/feed', { params: { topics: topics?.join(','), limit } });
+export const createLDRSubscription = (query, subType = 'search', intervalHours = 24) =>
+  api.post('/ldr/news/subscriptions', { query, sub_type: subType, interval_hours: intervalHours });
+
+// Analytics
+export const getLDRStrategyAnalytics = () => api.get('/ldr/analytics/strategies');
+export const getLDREngineAnalytics = () => api.get('/ldr/analytics/engines');
+
 export default api;

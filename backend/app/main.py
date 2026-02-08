@@ -78,6 +78,10 @@ app.include_router(enterprise_router, prefix="/api/enterprise", tags=["Enterpris
 # Mount LightRAG router
 app.include_router(lightrag_router)
 
+# Mount LDR (Local Deep Research) router
+from app.ldr_routes import router as ldr_router
+app.include_router(ldr_router)
+
 
 @app.on_event("startup")
 async def startup_event():

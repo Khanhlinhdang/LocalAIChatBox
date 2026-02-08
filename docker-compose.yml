@@ -199,6 +199,14 @@ services:
       - LIGHTRAG_LANGUAGE=Vietnamese
       - LIGHTRAG_NUM_CTX=2048
       - RERANK_BY_DEFAULT=false
+      # Phase 7 - Local Deep Research (LDR)
+      - LDR_LLM_PROVIDER=ollama
+      - LDR_LLM_MODEL=llama3.1
+      - LDR_DEFAULT_SEARCH_ENGINE=searxng
+      - LDR_SEARXNG_URL=http://searxng:8080
+      - LDR_MAX_ITERATIONS=${LDR_MAX_ITERATIONS:-5}
+      - LDR_QUESTIONS_PER_ITERATION=${LDR_QUESTIONS_PER_ITERATION:-3}
+      - LDR_ALLOW_UNENCRYPTED=true
     volumes:
       - ./data/vector_store:/app/data/vector_store
       - ./data/documents:/app/data/documents

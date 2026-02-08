@@ -3,7 +3,8 @@ import paramiko, json, time
 
 ssh = paramiko.SSHClient()
 ssh.set_missing_host_key_policy(paramiko.AutoAddPolicy())
-ssh.connect('194.59.xxx.xxx', username='root', password='password')
+from vps_infor import ip, username, password
+ssh.connect(ip, username=username, password=password)
 
 def run(cmd, timeout=600):
     _, stdout, stderr = ssh.exec_command(cmd, timeout=timeout)
