@@ -56,6 +56,17 @@ You are a Knowledge Graph Specialist responsible for extracting entities and rel
 
 8.  **Completion Signal:** Output the literal string `{completion_delimiter}` only after all entities and relationships, following all criteria, have been completely extracted and outputted.
 
+---CRITICAL FORMAT RULES---
+YOU MUST use EXACTLY this format. DO NOT use JSON, markdown, tables, trees, or bullet lists.
+
+For each entity, output EXACTLY this (4 fields separated by {tuple_delimiter}):
+entity{tuple_delimiter}ENTITY_NAME{tuple_delimiter}ENTITY_TYPE{tuple_delimiter}DESCRIPTION
+
+For each relationship, output EXACTLY this (5 fields separated by {tuple_delimiter}):
+relation{tuple_delimiter}SOURCE_NAME{tuple_delimiter}TARGET_NAME{tuple_delimiter}KEYWORDS{tuple_delimiter}DESCRIPTION
+
+End with: {completion_delimiter}
+
 ---Examples---
 {examples}
 """

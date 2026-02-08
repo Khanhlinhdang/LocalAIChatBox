@@ -38,8 +38,8 @@ async def ollama_llm_complete(
     host = kwargs.pop("host", None) or os.getenv("OLLAMA_HOST", "http://ollama:11434")
     timeout = kwargs.pop("timeout", None)
     if timeout == 0 or timeout is None:
-        timeout = float(os.getenv("LLM_TIMEOUT", "600"))  # Match LightRAG timeout
-    model = kwargs.pop("model", None) or os.getenv("OLLAMA_LLM_MODEL", "llama3.1")
+        timeout = float(os.getenv("LLM_TIMEOUT", "1800"))  # 30min for CPU-only inference
+    model = kwargs.pop("model", None) or os.getenv("LIGHTRAG_LLM_MODEL", "llama3.2:3b")
     kwargs.pop("api_key", None)
     kwargs.pop("keyword_extraction", None)
     
@@ -107,7 +107,8 @@ async def ollama_embedding(
     host = kwargs.pop("host", None) or os.getenv("OLLAMA_HOST", "http://ollama:11434")
     timeout = kwargs.pop("timeout", None)
     
-    client = ollama_lib.AsyncClient(host=host, timeout=timeout)
+    embed_timeout = float(os.getenv("EMBED_TIMEOUT", "300"))  # 5min for embedding
+    client = ollama_lib.AsyncClient(host=host, timeout=embed_timeout)
     try:
         data = await client.embed(model=embed_model, input=texts)
         return np.array(data["embeddings"])
@@ -134,7 +135,7 @@ class LightRAGService:
     def __init__(self):
         self.rag = None
         self.working_dir = os.getenv("LIGHTRAG_WORKING_DIR", "/app/data/lightrag_storage")
-        self.llm_model = os.getenv("OLLAMA_LLM_MODEL", "llama3.1")
+        self.llm_model = os.getenv("LIGHTRAG_LLM_MODEL", "llama3.2:3b")
         self.embed_model = os.getenv("LIGHTRAG_EMBED_MODEL", "nomic-embed-text:latest")
         self.ollama_host = os.getenv("OLLAMA_HOST", "http://ollama:11434")
         self._lock = asyncio.Lock()
@@ -223,15 +224,32 @@ class LightRAGService:
                 return False
     
     async def insert_text(self, text: str, file_path: str = None) -> dict:
-        """Insert text into LightRAG for indexing."""
+        """Insert text into LightRAG for indexing (non-blocking)."""
         if not self._initialized:
             await self.initialize()
         
         try:
-            track_id = await self.rag.ainsert(
+            from app.lightrag.utils import generate_track_id
+            track_id = generate_track_id("insert")
+            
+            # Enqueue document (fast, no LLM calls)
+            await self.rag.apipeline_enqueue_documents(
                 text,
-                file_paths=[file_path] if file_path else None
+                ids=None,
+                file_paths=[file_path] if file_path else None,
+                track_id=track_id
             )
+            
+            # Process in background (entity extraction via LLM — can take minutes on CPU)
+            async def _process_bg():
+                try:
+                    await self.rag.apipeline_process_enqueue_documents()
+                    logger.info(f"Background processing completed for track_id={track_id}")
+                except Exception as e:
+                    logger.error(f"Background processing error: {e}")
+            
+            asyncio.create_task(_process_bg())
+            
             return {"status": "success", "track_id": track_id}
         except Exception as e:
             logger.error(f"Insert error: {e}")
@@ -282,10 +300,27 @@ class LightRAGService:
             if not content.strip():
                 return {"status": "error", "message": "No content extracted from file"}
             
-            track_id = await self.rag.ainsert(
+            from app.lightrag.utils import generate_track_id
+            track_id = generate_track_id("insert")
+            
+            # Enqueue (fast)
+            await self.rag.apipeline_enqueue_documents(
                 content,
-                file_paths=[str(path.name)]
+                ids=None,
+                file_paths=[str(path.name)],
+                track_id=track_id
             )
+            
+            # Process in background
+            async def _process_bg():
+                try:
+                    await self.rag.apipeline_process_enqueue_documents()
+                    logger.info(f"Background file processing completed for {path.name}")
+                except Exception as e:
+                    logger.error(f"Background file processing error: {e}")
+            
+            asyncio.create_task(_process_bg())
+            
             return {"status": "success", "track_id": track_id, "chars": len(content)}
         except Exception as e:
             logger.error(f"File insert error: {e}")
@@ -314,6 +349,7 @@ class LightRAGService:
                 stream=stream,
                 only_need_context=only_need_context,
                 only_need_prompt=only_need_prompt,
+                enable_rerank=False,
             )
             
             if top_k is not None:
@@ -346,13 +382,13 @@ class LightRAGService:
             from app.lightrag.base import QueryParam
             
             # First get context
-            context_param = QueryParam(mode=mode, only_need_context=True)
+            context_param = QueryParam(mode=mode, only_need_context=True, enable_rerank=False)
             if top_k:
                 context_param.top_k = top_k
             context = await self.rag.aquery(question, param=context_param)
             
             # Then get full response
-            response_param = QueryParam(mode=mode)
+            response_param = QueryParam(mode=mode, enable_rerank=False)
             if top_k:
                 response_param.top_k = top_k
             response = await self.rag.aquery(question, param=response_param)

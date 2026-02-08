@@ -53,7 +53,7 @@ bash cleanup_docker.sh
 ### Option 1: Tự động (Recommended) ⚡
 
 ```bash
-ssh root@194.59.165.202
+ssh root@194.59.xxx.xxx
 cd ~/LocalAIChatBox
 git pull origin main
 
@@ -109,7 +109,7 @@ ragchat-backend  | INFO:     Uvicorn running on http://0.0.0.0:8000
 
 ## 🎯 Sau khi fix:
 
-Test ngay: http://194.59.165.202:81
+Test ngay: http://194.59.xxx.xxx:81
 
 - Username: `admin`
 - Password: `admin123`

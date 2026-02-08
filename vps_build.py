@@ -1,9 +1,9 @@
 import paramiko, time
 
-HOST = '194.59.165.202'
+HOST = '194.59.xxx.xxx'
 ssh = paramiko.SSHClient()
 ssh.set_missing_host_key_policy(paramiko.AutoAddPolicy())
-ssh.connect(HOST, username='root', password='Che.Autotradingkit0123pro')
+ssh.connect(HOST, username='root', password='password')
 print('Connected!')
 
 # Check if docker is running

@@ -11,7 +11,7 @@
 ### Bước 1: SSH vào VPS
 
 ```bash
-ssh root@194.59.165.202
+ssh root@194.59.xxx.xxx
 cd ~/LocalAIChatBox  # Hoặc đường dẫn project của bạn
 ```
 
@@ -114,7 +114,7 @@ chmod +x test_api_vps.sh
 
 ### Bước 9: Truy cập từ browser
 
-Mở browser và truy cập: **http://194.59.165.202:81**
+Mở browser và truy cập: **http://194.59.xxx.xxx:81**
 
 - Username: `admin`
 - Password: `admin123`

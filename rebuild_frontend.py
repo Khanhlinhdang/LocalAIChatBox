@@ -1,7 +1,7 @@
 import paramiko, time, json
 ssh = paramiko.SSHClient()
 ssh.set_missing_host_key_policy(paramiko.AutoAddPolicy())
-ssh.connect('194.59.165.202', username='root', password='Che.Autotradingkit0123pro')
+ssh.connect('194.59.xxx.xxx', username='root', password='password')
 print('Connected! Rebuilding frontend...')
 
 cmds = [

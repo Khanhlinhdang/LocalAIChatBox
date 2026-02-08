@@ -10,7 +10,7 @@ import sys
 from datetime import datetime
 
 # Configuration
-BASE_URL = "http://194.59.165.202:81"  # Change this to your VPS IP and port
+BASE_URL = "http://194.59.xxx.xxx:81"  # Change this to your VPS IP and port
 API_BASE = f"{BASE_URL}/api"
 
 # Colors for terminal output
@@ -226,7 +226,7 @@ def run_all_tests():
     """Run all API tests"""
     print(f"\n{BLUE}╔{'═'*58}╗{RESET}")
     print(f"{BLUE}║{' '*15}LocalAIChatBox API Test Suite{' '*15}║{RESET}")
-    print(f"{BLUE}║{' '*20}VPS: 194.59.165.202:81{' '*20}║{RESET}")
+    print(f"{BLUE}║{' '*20}VPS: 194.59.xxx.xxx:81{' '*20}║{RESET}")
     print(f"{BLUE}║{' '*16}Time: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}{' '*17}║{RESET}")
     print(f"{BLUE}╚{'═'*58}╝{RESET}\n")
     
@@ -248,7 +248,7 @@ def run_all_tests():
     if not results['health']:
         print(f"\n{RED}⚠️  Health check failed! Backend có thể không chạy hoặc quá chậm.{RESET}")
         print(f"\n{YELLOW}Các bước kiểm tra trên VPS:{RESET}")
-        print(f"  1. SSH: ssh root@194.59.165.202")
+        print(f"  1. SSH: ssh root@194.59.xxx.xxx")
         print(f"  2. Vào thư mục: cd ~/LocalAIChatBox")
         print(f"  3. Xem containers: docker-compose ps")
         print(f"  4. Xem logs backend: docker-compose logs backend --tail=100")
@@ -295,7 +295,7 @@ def run_all_tests():
     if passed_tests == total_tests:
         print(f"{GREEN}✓ All tests passed! API is working correctly.{RESET}")
         print(f"\n{GREEN}🎉 Bạn có thể truy cập frontend và đăng nhập:{RESET}")
-        print(f"   👉 http://194.59.165.202:81")
+        print(f"   👉 http://194.59.xxx.xxx:81")
         print(f"   Username: admin")
         print(f"   Password: admin123")
         return True
@@ -303,7 +303,7 @@ def run_all_tests():
         print(f"\n{RED}✗ Some tests failed. Check the details above.{RESET}")
         print(f"\n{YELLOW}📋 Troubleshooting Steps:{RESET}")
         print(f"\n{BLUE}Bước 1: SSH vào VPS{RESET}")
-        print(f"  ssh root@194.59.165.202")
+        print(f"  ssh root@194.59.xxx.xxx")
         print(f"\n{BLUE}Bước 2: Kiểm tra containers{RESET}")
         print(f"  cd ~/LocalAIChatBox")
         print(f"  docker-compose ps")

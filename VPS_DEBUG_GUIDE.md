@@ -22,8 +22,8 @@
 ### Bước 1: Kết nối SSH vào VPS
 
 ```bash
-ssh root@194.59.165.202
-# Hoặc ssh user@194.59.165.202
+ssh root@194.59.xxx.xxx
+# Hoặc ssh user@194.59.xxx.xxx
 ```
 
 ### Bước 2: Vào thư mục project
@@ -257,11 +257,11 @@ docker-compose logs -f postgres
 Sau khi deploy, test các endpoint sau:
 
 1. **Health Check**
-   - [ ] `curl http://194.59.165.202:81/api/health`
+   - [ ] `curl http://194.59.xxx.xxx:81/api/health`
    - Expect: `{"status": "healthy", ...}`
 
 2. **Register**
-   - [ ] Vào http://194.59.165.202:81/login
+   - [ ] Vào http://194.59.xxx.xxx:81/login
    - [ ] Click "Register"
    - [ ] Điền thông tin và submit
    - Expect: Redirect to dashboard

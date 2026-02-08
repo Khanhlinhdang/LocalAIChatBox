@@ -32,14 +32,14 @@ python test_api.py
 ### Cấu hình
 Sửa `BASE_URL` trong file `test_api.py`:
 ```python
-BASE_URL = "http://194.59.165.202:81"  # Your VPS IP and port
+BASE_URL = "http://194.59.xxx.xxx:81"  # Your VPS IP and port
 ```
 
 ## 🖥️ Test trực tiếp trên VPS (Bash)
 
 ### SSH vào VPS
 ```bash
-ssh root@194.59.165.202
+ssh root@194.59.xxx.xxx
 cd ~/LocalAIChatBox  # Hoặc đường dẫn project của bạn
 ```
 
@@ -234,7 +234,7 @@ Nếu tất cả tests pass:
 
 Sau khi tất cả tests pass:
 
-1. **Test từ browser**: Truy cập http://194.59.165.202:81
+1. **Test từ browser**: Truy cập http://194.59.xxx.xxx:81
 2. **Đăng nhập**: Username `admin`, Password `admin123`
 3. **Upload document**: Test RAG functionality
 4. **Test chat**: Hỏi câu hỏi về documents

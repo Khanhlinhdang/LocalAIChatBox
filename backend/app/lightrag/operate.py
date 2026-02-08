@@ -907,6 +907,977 @@ async def _get_cached_extraction_results(
     return sorted_cached_results  # each item: list(extraction_result, create_time)
 
 
+def _clean_entity_names_in_tuples(lines_str: str, tuple_delimiter: str) -> str:
+    """Post-process tuple lines to clean entity names that contain TYPE prefixes.
+    
+    Fixes names like 'PERSON, Guido van Rossum' -> 'Guido van Rossum' with entity_type=PERSON
+    and 'CREATE, Python' -> 'Python' with entity_type=CONCEPT (verb prefix stripped)
+    """
+    td = tuple_delimiter
+    ENTITY_TYPES = {"PERSON", "ORGANIZATION", "TECHNOLOGY", "CONCEPT", "EVENT", "LOCATION", "PROJECT", "PRODUCT",
+                    "ORG", "TECH", "LOC", "DATE", "TOOL", "FRAMEWORK", "LANGUAGE", "COMPANY", "SOFTWARE", "PLATFORM"}
+    # Common verbs that appear as TYPE-like prefixes
+    VERB_PREFIXES = {"CREATE", "DEVELOP", "USE", "BUILD", "MAKE", "DESIGN", "INVENT", "FOUND", "START",
+                     "create", "develop", "use", "build", "sang tao", "phat trien", "su dung"}
+    
+    cleaned_lines = []
+    # Map old names to new names for relation fixup
+    name_map = {}
+    
+    for line in lines_str.split('\n'):
+        parts = line.split(td)
+        if not parts:
+            cleaned_lines.append(line)
+            continue
+        
+        if parts[0].strip() == 'entity' and len(parts) >= 4:
+            # entity{td}name{td}TYPE{td}description
+            name = parts[1].strip()
+            etype = parts[2].strip()
+            desc = parts[3].strip() if len(parts) > 3 else name
+            
+            # Check if name has a TYPE prefix: "TYPE, name" or "TYPE: name"
+            cleaned = False
+            for sep in [', ', ': ']:
+                if sep in name:
+                    prefix, rest = name.split(sep, 1)
+                    prefix_upper = prefix.strip().upper()
+                    if prefix_upper in ENTITY_TYPES:
+                        name_map[name] = rest.strip()
+                        name = rest.strip()
+                        if etype == 'UNKNOWN':
+                            etype = prefix_upper
+                        cleaned = True
+                        break
+                    elif prefix.strip() in VERB_PREFIXES or prefix_upper in VERB_PREFIXES:
+                        name_map[line.split(td)[1].strip()] = rest.strip()
+                        name = rest.strip()
+                        cleaned = True
+                        break
+            
+            cleaned_lines.append(f"entity{td}{name}{td}{etype}{td}{desc if not cleaned else name}")
+        
+        elif parts[0].strip() == 'relation' and len(parts) >= 5:
+            # relation{td}source{td}target{td}keyword{td}description
+            src = parts[1].strip()
+            tgt = parts[2].strip()
+            kw = parts[3].strip()
+            desc = parts[4].strip() if len(parts) > 4 else f"{src} {kw} {tgt}"
+            
+            # Clean source name
+            for sep in [', ', ': ']:
+                if sep in src:
+                    prefix, rest = src.split(sep, 1)
+                    if prefix.strip().upper() in ENTITY_TYPES or prefix.strip() in VERB_PREFIXES or prefix.strip().upper() in VERB_PREFIXES:
+                        src_clean = rest.strip()
+                        if kw in ('RELATED', 'RELATED_TO', ''):
+                            kw = f"{prefix.strip().upper()}"
+                        name_map[src] = src_clean
+                        src = src_clean
+                        break
+            
+            # Clean target name (independently)
+            for sep in [', ', ': ']:
+                if sep in tgt:
+                    prefix, rest = tgt.split(sep, 1)
+                    if prefix.strip().upper() in ENTITY_TYPES or prefix.strip() in VERB_PREFIXES or prefix.strip().upper() in VERB_PREFIXES:
+                        name_map[tgt] = rest.strip()
+                        tgt = rest.strip()
+                        break
+            
+            cleaned_lines.append(f"relation{td}{src}{td}{tgt}{td}{kw}{td}{desc}")
+        else:
+            cleaned_lines.append(line)
+    
+    result = '\n'.join(cleaned_lines)
+    
+    # Apply name_map to fix any remaining references
+    for old_name, new_name in name_map.items():
+        if old_name != new_name:
+            result = result.replace(f"{td}{old_name}{td}", f"{td}{new_name}{td}")
+    
+    return result
+
+
+def _convert_json_to_tuple_format(result: str, tuple_delimiter: str, completion_delimiter: str) -> str:
+    """Convert non-standard LLM output formats to tuple format.
+    
+    Smaller LLMs (e.g., llama3.2:3b) output various formats instead of the expected
+    tuple format. This function detects and converts them using a multi-strategy approach.
+    
+    Observed LLM output formats:
+    1. JSON: {"type": "PERSON", "name": "..."}
+    2. Tree:  entity\\n|\\n|---TYPE\\n|    |---name
+    3. Label-list: entity\\nTYPE:\\n- name1\\n- name2
+    4. Labeled: ENTITY: name (TYPE) - description
+    5. Markdown table: | Name | Type | Description |
+    """
+    import re as _re
+    
+    # Quick check: if result already has tuple delimiters, it's in correct format
+    if tuple_delimiter in result:
+        return result
+    
+    td = tuple_delimiter  # shorthand
+    lines = []
+    
+    # Known entity types for validation
+    ENTITY_TYPES = {'PERSON', 'ORGANIZATION', 'TECHNOLOGY', 'CONCEPT', 
+                    'EVENT', 'LOCATION', 'PROJECT', 'PRODUCT', 'OTHER',
+                    'CATEGORY', 'EQUIPMENT', 'ARTIFACT', 'METHOD', 'DATA',
+                    'CONTENT', 'CREATURE', 'NATURALOBJECT'}
+    
+    try:
+        # === Strategy 1: JSON objects (typed format) ===
+        entity_json = _re.findall(
+            r'\{\s*"type"\s*:\s*"([^"]+)"\s*,\s*"name"\s*:\s*"([^"]+)"(?:\s*,\s*"description"\s*:\s*"([^"]*)")?\s*\}',
+            result
+        )
+        for match in entity_json:
+            etype, ename = match[0].upper(), match[1]
+            edesc = match[2] if match[2] else ename
+            lines.append(f"entity{td}{ename}{td}{etype}{td}{edesc}")
+        
+        rel_json = _re.findall(
+            r'\{\s*"type"\s*:\s*"([^"]+)"\s*,\s*"(?:source|subject)"\s*:\s*"([^"]+)"\s*,\s*"(?:target|object)"\s*:\s*"([^"]+)"(?:\s*,\s*"description"\s*:\s*"([^"]*)")?\s*\}',
+            result
+        )
+        for match in rel_json:
+            rtype, rsrc, rtgt = match[0], match[1], match[2]
+            rdesc = match[3] if match[3] else f"{rsrc} {rtype.lower().replace('_', ' ')} {rtgt}"
+            lines.append(f"relation{td}{rsrc}{td}{rtgt}{td}{rtype}{td}{rdesc}")
+        
+        if lines:
+            logger.info(f"Converted JSON format: {len(entity_json)} entities, {len(rel_json)} relations")
+            return "\n".join(lines) + f"\n{completion_delimiter}"
+        
+        # === Strategy 1b: Dictionary-style JSON ===
+        # Handles: {"PERSON": "name", "ORGANIZATION": ["name1", "name2"]}
+        # And relationship dicts: {"TECHNOLOGY": [{"entity": "ORG", "value": "Google"}]}
+        import json as _json
+        
+        # Extract all JSON blocks from the text
+        json_blocks = []
+        brace_depth = 0
+        block_start = -1
+        for ci, ch in enumerate(result):
+            if ch == '{':
+                if brace_depth == 0:
+                    block_start = ci
+                brace_depth += 1
+            elif ch == '}':
+                brace_depth -= 1
+                if brace_depth == 0 and block_start >= 0:
+                    json_blocks.append(result[block_start:ci+1])
+                    block_start = -1
+        
+        # Determine if we're in entity or relation section
+        entity_dict_lines = []
+        relation_dict_lines = []
+        entity_dict_names = {}  # type -> [names] for relation inference
+        
+        for jb in json_blocks:
+            try:
+                obj = _json.loads(jb)
+                if not isinstance(obj, dict):
+                    continue
+                
+                # Check if keys look like entity types
+                has_entity_type_keys = any(k.upper() in ENTITY_TYPES for k in obj.keys())
+                has_relation_keys = any(k.lower() in ('source', 'subject', 'entity', 'relationship', 'type') for k in obj.keys())
+                
+                # Check context: is this JSON block preceded by "entity" or "relation"?
+                block_pos = result.find(jb)
+                preceding_text = result[:block_pos].lower().strip() if block_pos > 0 else ""
+                in_entity_section = preceding_text.endswith('entity') or preceding_text.endswith('entities')
+                in_relation_section = preceding_text.endswith('relation') or preceding_text.endswith('relationship') or preceding_text.endswith('relationships')
+                
+                if has_entity_type_keys and (in_entity_section or not in_relation_section):
+                    # Dictionary where keys are entity types, values are names
+                    for key, val in obj.items():
+                        etype = key.upper()
+                        if etype not in ENTITY_TYPES:
+                            continue
+                        
+                        names = []
+                        if isinstance(val, str):
+                            names = [val]
+                        elif isinstance(val, list):
+                            for item in val:
+                                if isinstance(item, str):
+                                    names.append(item)
+                                elif isinstance(item, dict):
+                                    # {"name": "...", "description": "..."} 
+                                    n = item.get('name') or item.get('value') or item.get('entity', '')
+                                    if n:
+                                        names.append(str(n))
+                        
+                        for name in names:
+                            name = name.strip()
+                            if name:
+                                entity_dict_lines.append(f"entity{td}{name}{td}{etype}{td}{name}")
+                                entity_dict_names.setdefault(etype, []).append(name)
+                
+                elif in_relation_section or has_relation_keys:
+                    # Relationship dict formats:
+                    # {"TECHNOLOGY": [{"entity": "ORG", "value": "Google"}]}
+                    # {"source": "A", "target": "B", "type": "CREATED"}
+                    # {"subject": "A", "object": "B", "relationship": "created"}
+                    
+                    if 'source' in obj or 'subject' in obj:
+                        src = obj.get('source') or obj.get('subject', '')
+                        tgt = obj.get('target') or obj.get('object', '')
+                        kw = obj.get('type') or obj.get('relationship') or obj.get('keyword', 'RELATED')
+                        desc = obj.get('description', f"{src} {kw} {tgt}")
+                        if src and tgt:
+                            relation_dict_lines.append(f"relation{td}{src}{td}{tgt}{td}{kw}{td}{desc}")
+                    else:
+                        # Key-value relationship dict
+                        # e.g., {"TECHNOLOGY": [{"entity": "PERSON", "value": "Guido van Rossum"}]}
+                        for key, val in obj.items():
+                            if isinstance(val, list):
+                                for item in val:
+                                    if isinstance(item, dict):
+                                        entity_field = item.get('entity', '')
+                                        value_field = item.get('value', '') or item.get('target', '') or item.get('object', '')
+                                        source_field = item.get('source', '') or item.get('subject', '')
+                                        
+                                        # If "entity" is actually an entity TYPE name, not an entity name
+                                        if entity_field.upper() in ENTITY_TYPES:
+                                            # value_field is the actual entity name
+                                            # key is the related category/type
+                                            # Create relations between key-type entities and the value entity
+                                            key_type_names = entity_dict_names.get(key.upper(), [])
+                                            if key_type_names and value_field:
+                                                for kname in key_type_names:
+                                                    relation_dict_lines.append(
+                                                        f"relation{td}{kname}{td}{value_field}{td}RELATED_TO{td}"
+                                                        f"{kname} is related to {value_field}"
+                                                    )
+                                            elif value_field:
+                                                relation_dict_lines.append(
+                                                    f"relation{td}{key}{td}{value_field}{td}RELATED{td}"
+                                                    f"{key} relates to {value_field}"
+                                                )
+                                        else:
+                                            # entity is the actual source entity name
+                                            src = entity_field or source_field
+                                            tgt = value_field
+                                            kw = item.get('type') or item.get('relationship') or key
+                                            desc = item.get('description', f"{src} {kw} {tgt}")
+                                            if src and tgt:
+                                                relation_dict_lines.append(f"relation{td}{src}{td}{tgt}{td}{kw}{td}{desc}")
+                                    elif isinstance(item, str) and ':' in item:
+                                        parts = item.split(':', 1)
+                                        relation_dict_lines.append(f"relation{td}{parts[0].strip()}{td}{parts[1].strip()}{td}{key}{td}{item}")
+            except (_json.JSONDecodeError, ValueError):
+                continue
+        
+        if entity_dict_lines or relation_dict_lines:
+            # If we have entities but no relations, infer relations between entities
+            if entity_dict_lines and not relation_dict_lines:
+                all_names = []
+                for names in entity_dict_names.values():
+                    all_names.extend(names)
+                if len(all_names) >= 2:
+                    for i in range(1, len(all_names)):
+                        relation_dict_lines.append(
+                            f"relation{td}{all_names[0]}{td}{all_names[i]}{td}RELATED{td}"
+                            f"{all_names[0]} is related to {all_names[i]}"
+                        )
+            
+            # Only return from dict-JSON if we found actual entities.
+            # If we only have relations without entities, fall through to the
+            # state machine which can extract entities WITH proper types.
+            if entity_dict_lines:
+                all_lines = entity_dict_lines + relation_dict_lines
+                logger.info(f"Converted dict-JSON format: {len(entity_dict_lines)} entities, {len(relation_dict_lines)} relations")
+                return "\n".join(all_lines) + f"\n{completion_delimiter}"
+            else:
+                # Remember these relations for later merging
+                logger.info(f"Dict-JSON found {len(relation_dict_lines)} relations but 0 entities, continuing to state machine...")
+                _saved_dict_relations = relation_dict_lines
+        
+        # === Universal state machine parser ===
+        # Handles ALL text-based formats:
+        # - Tree:       entity\n|\n|---TYPE\n|    |---name
+        # - Label-list: entity\nTYPE:\n- name1\n- name2  
+        # - Mixed:      relation\nTYPE1:TYPE2\nsubject verb object
+        
+        mode = None           # 'entity' or 'relation'
+        current_type = None   # current TYPE name
+        entity_names = {}     # type -> [names] for entity lookup
+        entity_lines = []
+        relation_lines = []
+        rel_text_lines = []   # raw relation description lines
+        rel_type_pair = None  # e.g., "PERSON:TECHNOLOGY"
+        
+        def _flush_entities():
+            nonlocal current_type
+            if current_type and current_type in entity_names and entity_names[current_type]:
+                for name in entity_names[current_type]:
+                    entity_lines.append(f"entity{td}{name}{td}{current_type}{td}{name}")
+            current_type = None
+        
+        def _flush_relations():
+            nonlocal rel_text_lines, rel_type_pair
+            if not rel_text_lines:
+                rel_text_lines = []
+                rel_type_pair = None
+                return
+            
+            # Collect all known entity names for matching
+            all_entity_names = set()
+            for names in entity_names.values():
+                all_entity_names.update(names)
+            
+            keyword = rel_type_pair.replace(':', '_') if rel_type_pair else "RELATED"
+            new_rels = []
+            
+            for text_line in rel_text_lines:
+                text_line = text_line.strip()
+                if not text_line:
+                    continue
+                
+                # Try to find entity names in the relation text
+                found_entities = []
+                for ename in sorted(all_entity_names, key=len, reverse=True):
+                    if ename in text_line:
+                        found_entities.append(ename)
+                
+                if len(found_entities) >= 2:
+                    # Extract verb/keyword from middle text
+                    src, tgt = found_entities[0], found_entities[1]
+                    middle = text_line
+                    for ent in found_entities:
+                        middle = middle.replace(ent, '').strip()
+                    kw = middle.strip(' ,.-') if middle.strip(' ,.-') else keyword
+                    new_rels.append(
+                        f"relation{td}{src}{td}{tgt}{td}{kw}{td}{text_line}"
+                    )
+                elif len(found_entities) == 1:
+                    # Only one entity found - try to extract the other from remaining text
+                    src = found_entities[0]
+                    remaining = text_line.replace(src, '').strip(' ,.-')
+                    parts = _re.split(r'\s+(?:created|developed|is|used|made|built|designed|invented)\s+', remaining, maxsplit=1)
+                    if len(parts) == 2:
+                        tgt = parts[1].strip(' ,.-')
+                        if tgt:
+                            new_rels.append(
+                                f"relation{td}{src}{td}{tgt}{td}RELATED{td}{text_line}"
+                            )
+            
+            # If no relations found by text matching, rel_text_lines may be 
+            # individual entity names (tree format). Create relations between them.
+            if not new_rels:
+                known_names = [t.strip() for t in rel_text_lines 
+                              if t.strip() and t.strip() in all_entity_names]
+                if len(known_names) >= 2:
+                    # Create relations: first name with each subsequent
+                    for i in range(1, len(known_names)):
+                        new_rels.append(
+                            f"relation{td}{known_names[0]}{td}{known_names[i]}{td}{keyword}{td}"
+                            f"{known_names[0]} {keyword.lower().replace('_', ' ')} {known_names[i]}"
+                        )
+                elif len(rel_text_lines) >= 2:
+                    # Even if names aren't in entity_names, try creating relations
+                    # between consecutive items
+                    items = [t.strip() for t in rel_text_lines if t.strip()]
+                    for i in range(1, len(items)):
+                        new_rels.append(
+                            f"relation{td}{items[0]}{td}{items[i]}{td}{keyword}{td}"
+                            f"{items[0]} {keyword.lower().replace('_', ' ')} {items[i]}"
+                        )
+            
+            relation_lines.extend(new_rels)
+            
+            rel_text_lines = []
+            rel_type_pair = None
+        
+        for raw_line in result.split('\n'):
+            stripped = raw_line.strip()
+            
+            # Skip empty lines, pipes, dashes, and completion delimiters
+            if not stripped or stripped in ('|', '-', '<|COMPLETE|>'):
+                continue
+            
+            # Section headers: "entity" or "relation" (with optional colon)
+            if _re.match(r'^entity\s*:?\s*$', stripped, _re.IGNORECASE):
+                if mode == 'entity':
+                    _flush_entities()
+                elif mode == 'relation':
+                    _flush_relations()
+                mode = 'entity'
+                current_type = None
+                continue
+            
+            if _re.match(r'^relation\s*:?\s*', stripped, _re.IGNORECASE):
+                if mode == 'entity':
+                    _flush_entities()
+                elif mode == 'relation':
+                    _flush_relations()
+                mode = 'relation'
+                # Check if relation keyword is on same line: "relation PERSON:TECHNOLOGY"
+                m = _re.match(r'^relation\s+(.+)$', stripped, _re.IGNORECASE)
+                rel_type_pair = m.group(1).strip() if m else None
+                continue
+            
+            if mode == 'entity':
+                # Tree format: |---TYPE
+                m = _re.match(r'^\|---(.+)$', stripped)
+                if m and not stripped.startswith('|    '):
+                    _flush_entities()
+                    t = m.group(1).strip().upper()
+                    if t in ENTITY_TYPES:
+                        current_type = t
+                        if current_type not in entity_names:
+                            entity_names[current_type] = []
+                    continue
+                
+                # Tree format: |    |---name
+                m = _re.match(r'^\|\s+\|---(.+)$', stripped)
+                if m:
+                    name = m.group(1).strip()
+                    if name and current_type:
+                        entity_names.setdefault(current_type, []).append(name)
+                    continue
+                
+                # Label-list format: TYPE: (type header with colon)
+                m = _re.match(r'^([A-Z][A-Z_\s]+?)\s*:\s*$', stripped)
+                if m:
+                    t = m.group(1).strip()
+                    if t in ENTITY_TYPES:
+                        _flush_entities()
+                        current_type = t
+                        if current_type not in entity_names:
+                            entity_names[current_type] = []
+                    continue
+                
+                # Field-value format: "Field: TYPE" or "field: TYPE"
+                m = _re.match(r'^(?:Field|field|Type|type)\s*:\s*([A-Z][A-Z_\s]+?)$', stripped)
+                if m:
+                    t = m.group(1).strip()
+                    if t in ENTITY_TYPES:
+                        _flush_entities()
+                        current_type = t
+                        if current_type not in entity_names:
+                            entity_names[current_type] = []
+                    continue
+                
+                # Skip "value" header line (Field-value format)
+                if stripped.lower() in ('value', 'values', 'name', 'names', 'items'):
+                    continue
+                
+                # Label-list format: TYPE:\n- name  (type with names on same line after colon)
+                m = _re.match(r'^([A-Z][A-Z_\s]+?)\s*:\s*(.+)$', stripped)
+                if m:
+                    t = m.group(1).strip()
+                    if t in ENTITY_TYPES:
+                        _flush_entities()
+                        current_type = t
+                        name = m.group(2).strip().strip('-').strip()
+                        if current_type not in entity_names:
+                            entity_names[current_type] = []
+                        if name and name != '-':
+                            entity_names[current_type].append(name)
+                    continue
+                
+                # Bullet format: - name or * name
+                m = _re.match(r'^[-*]\s+(.+)$', stripped)
+                if m:
+                    bullet_text = m.group(1).strip()
+                    # Check if bullet contains TYPE: name (e.g., "- PERSON: Guido van Rossum")
+                    type_name_match = _re.match(r'^([A-Z][A-Z_\s]+?)\s*:\s*(.+)$', bullet_text)
+                    if type_name_match:
+                        t = type_name_match.group(1).strip()
+                        if t in ENTITY_TYPES:
+                            _flush_entities()
+                            current_type = t
+                            if current_type not in entity_names:
+                                entity_names[current_type] = []
+                            # Handle comma-separated names: "Google, Meta"
+                            names_text = type_name_match.group(2).strip()
+                            for name_part in names_text.split(','):
+                                name_part = name_part.strip().strip('-').strip()
+                                if name_part and name_part != '-':
+                                    entity_names[current_type].append(name_part)
+                            continue
+                    
+                    # Check if bullet is [TYPE] bracket format (e.g., "- [PERSON]")
+                    bracket_match = _re.match(r'^\[([A-Z][A-Z_\s]+?)\]$', bullet_text)
+                    if bracket_match:
+                        t = bracket_match.group(1).strip()
+                        if t in ENTITY_TYPES:
+                            _flush_entities()
+                            current_type = t
+                            if current_type not in entity_names:
+                                entity_names[current_type] = []
+                            continue
+                    
+                    name = None
+                    if current_type:
+                        name = bullet_text
+                    # Skip empty entries like just "-"
+                    if name and name != '-' and name.lower() != 'none':
+                        # Remove parenthetical notes like "(year)"
+                        name = _re.sub(r'\s*\([^)]*\)\s*$', '', name).strip()
+                        if name:
+                            entity_names.setdefault(current_type, []).append(name)
+                    continue
+            
+            elif mode == 'relation':
+                # TYPE:TYPE pair header
+                m = _re.match(r'^([A-Z][A-Z_\s]+?)\s*:\s*([A-Z][A-Z_\s]+?)$', stripped)
+                if m:
+                    _flush_relations()
+                    rel_type_pair = f"{m.group(1).strip()}:{m.group(2).strip()}"
+                    continue
+                
+                # Multi-TYPE relation line: "- TYPE1: name1 - TYPE2: name2 - TYPE3: name3"
+                # Also handles single: "- TYPE: source_name"
+                bullet_match = _re.match(r'^[-*]\s+([A-Z][A-Z_\s]+?)\s*:\s*(.+)$', stripped)
+                if bullet_match:
+                    btype = bullet_match.group(1).strip()
+                    if btype in ENTITY_TYPES:
+                        full_text = bullet_match.group(2).strip()
+                        # Check if this is a multi-type line: TYPE1: name1 - TYPE2: name2
+                        # Split on " - " and parse each segment
+                        segments = _re.split(r'\s+-\s+', f"{btype}: {full_text}")
+                        parsed_pairs = []  # [(type, name), ...]
+                        for seg in segments:
+                            seg = seg.strip()
+                            seg_match = _re.match(r'^([A-Z][A-Z_\s]+?)\s*:\s*(.+)$', seg)
+                            if seg_match:
+                                stype = seg_match.group(1).strip()
+                                sname = seg_match.group(2).strip()
+                                if stype in ENTITY_TYPES and sname and sname.lower() != 'none':
+                                    # Handle comma-separated names
+                                    for n in sname.split(','):
+                                        n = n.strip()
+                                        if n and n.lower() != 'none':
+                                            parsed_pairs.append((stype, n))
+                            else:
+                                # Not a TYPE: name segment, treat as plain name
+                                if seg and seg.lower() != 'none':
+                                    parsed_pairs.append(('UNKNOWN', seg))
+                        
+                        if len(parsed_pairs) >= 2:
+                            # Multi-type relation line
+                            # Add all entities found
+                            for ptype, pname in parsed_pairs:
+                                entity_names.setdefault(ptype, []).append(pname)
+                                entity_lines.append(f"entity{td}{pname}{td}{ptype}{td}{pname}")
+                            # Create relations between consecutive pairs
+                            for i in range(1, len(parsed_pairs)):
+                                src_t, src_n = parsed_pairs[0]
+                                tgt_t, tgt_n = parsed_pairs[i]
+                                kw = f"{src_t}_{tgt_t}"
+                                relation_lines.append(
+                                    f"relation{td}{src_n}{td}{tgt_n}{td}{kw}{td}"
+                                    f"{src_n} is related to {tgt_n}"
+                                )
+                            continue
+                        elif len(parsed_pairs) == 1:
+                            # Single TYPE: name - structured relation source
+                            _flush_relations()
+                            rel_type_pair = parsed_pairs[0][0]
+                            rel_text_lines.append(f"__SOURCE__:{parsed_pairs[0][1]}")
+                            continue
+                        continue
+                
+                # Indented keyword:target line (structured relation format)
+                # e.g., "    technology: Python" or "    concept: Deep Learning"
+                indent_match = _re.match(r'^\s{2,}(\w[\w\s]*?)\s*:\s*(.+)$', stripped)
+                if indent_match and rel_text_lines and any(t.startswith('__SOURCE__:') for t in rel_text_lines):
+                    keyword = indent_match.group(1).strip()
+                    target = indent_match.group(2).strip()
+                    # Find the source name
+                    source = None
+                    for t in reversed(rel_text_lines):
+                        if t.startswith('__SOURCE__:'):
+                            source = t[len('__SOURCE__:'):]
+                            break
+                    if source and target:
+                        # Handle comma-separated targets
+                        for tgt_part in target.split(','):
+                            tgt_part = tgt_part.strip()
+                            if tgt_part:
+                                relation_lines.append(
+                                    f"relation{td}{source}{td}{tgt_part}{td}{keyword.upper()}{td}"
+                                    f"{source} {keyword} {tgt_part}"
+                                )
+                    continue
+                
+                # Tree format relation: |---KEYWORD
+                m = _re.match(r'^\|---(.+)$', stripped)
+                if m and not stripped.startswith('|    '):
+                    _flush_relations()
+                    rel_type_pair = m.group(1).strip()
+                    continue
+                
+                # Tree format: |    |---name (names under relation)
+                m = _re.match(r'^\|\s+\|---(.+)$', stripped)
+                if m:
+                    name = m.group(1).strip()
+                    if name:
+                        rel_text_lines.append(name)
+                    continue
+                
+                # Bullet format: - description
+                m = _re.match(r'^[-*]\s+(.+)$', stripped)
+                if m:
+                    rel_text_lines.append(m.group(1).strip())
+                    continue
+                
+                # Plain text relation description (e.g., "Guido van Rossum created Python")
+                if stripped and not _re.match(r'^[|#\-*]', stripped):
+                    rel_text_lines.append(stripped)
+                    continue
+        
+        # Final flush
+        if mode == 'entity':
+            _flush_entities()
+        elif mode == 'relation':
+            _flush_relations()
+        
+        # For tree-format relations with entity name lists (not text descriptions),
+        # create relations from hierarchical entity lists
+        if entity_lines and not relation_lines and rel_type_pair:
+            # Fallback: create relations between entities if we have type pairs
+            pass
+        
+        # If we found entities, also try to create relations between them
+        # by looking for entity names co-occurring in relation blocks
+        if entity_lines and not relation_lines:
+            # Check if there are relation sections with lists of entity names
+            all_names = set()
+            for names in entity_names.values():
+                all_names.update(names)
+            
+            if rel_text_lines:
+                for text in rel_text_lines:
+                    found = [n for n in all_names if n in text]
+                    if len(found) >= 2:
+                        relation_lines.append(
+                            f"relation{td}{found[0]}{td}{found[1]}{td}RELATED{td}{text}"
+                        )
+            
+            # If still no relations, infer from the original source text
+            # by finding entity name co-occurrences in sentences
+            if not relation_lines and all_names and len(all_names) >= 2:
+                logger.info(f"Inferring relations from source text for {len(all_names)} entities...")
+                # Split source text into sentences
+                sentences = _re.split(r'[.!?。]\s*', result)
+                # Also try splitting the original prompt context if available 
+                # The LLM output IS the 'result' passed to this function
+                # But we can also look for sentence-like patterns in any text before the entity list
+                
+                # Simple approach: create relations between entities that belong to different types
+                # and are likely related based on common knowledge graph patterns
+                type_entities = {}
+                for etype, enames in entity_names.items():
+                    for en in enames:
+                        type_entities[en] = etype
+                
+                # Create meaningful relations based on entity type pairs
+                persons = entity_names.get('PERSON', [])
+                orgs = entity_names.get('ORGANIZATION', [])
+                techs = entity_names.get('TECHNOLOGY', [])
+                projects = entity_names.get('PROJECT', [])
+                concepts = entity_names.get('CONCEPT', [])
+                
+                added_rels = set()
+                
+                def _add_rel(src, tgt, kw, desc):
+                    key = (src.lower(), tgt.lower())
+                    if key not in added_rels and src != tgt:
+                        added_rels.add(key)
+                        relation_lines.append(f"relation{td}{src}{td}{tgt}{td}{kw}{td}{desc}")
+                
+                # Person -> Technology: CREATED
+                for p in persons:
+                    for t in techs:
+                        _add_rel(p, t, "CREATED", f"{p} created {t}")
+                
+                # Organization -> Technology: USES/DEVELOPS
+                for o in orgs:
+                    for t in techs:
+                        _add_rel(o, t, "USES", f"{o} uses or develops {t}")
+                
+                # Organization -> Project: DEVELOPS
+                for o in orgs:
+                    for proj in projects:
+                        _add_rel(o, proj, "DEVELOPS", f"{o} develops {proj}")
+                
+                # Technology -> Project: ENABLES
+                for t in techs:
+                    for proj in projects:
+                        _add_rel(t, proj, "ENABLES", f"{t} enables {proj}")
+                
+                # Person -> Organization: AFFILIATED
+                for p in persons:
+                    for o in orgs:
+                        _add_rel(p, o, "AFFILIATED", f"{p} is affiliated with {o}")
+                
+                if relation_lines:
+                    logger.info(f"Inferred {len(relation_lines)} relations from entity types")
+        
+        lines = entity_lines + relation_lines
+        
+        # Merge any relations saved from dict-JSON strategy (if it found relations but no entities)
+        if '_saved_dict_relations' in dir() and _saved_dict_relations:
+            # Add dict-JSON relations that aren't already covered
+            existing_rels = set()
+            for l in relation_lines:
+                parts = l.split(td)
+                if len(parts) >= 3:
+                    existing_rels.add((parts[1].strip().lower(), parts[2].strip().lower()))
+            for drel in _saved_dict_relations:
+                parts = drel.split(td)
+                if len(parts) >= 3:
+                    key = (parts[1].strip().lower(), parts[2].strip().lower())
+                    if key not in existing_rels:
+                        lines.append(drel)
+        
+        if lines:
+            n_ent = len([l for l in lines if l.startswith('entity')])
+            n_rel = len([l for l in lines if l.startswith('relation')])
+            logger.info(f"Converted to tuple format: {n_ent} entities, {n_rel} relations")
+            return "\n".join(lines) + f"\n{completion_delimiter}"
+        
+        # === Fallback: Simple labeled format ===
+        # ENTITY: name (TYPE) - description
+        entity_simple = _re.findall(
+            r'(?:ENTITY|Entity):\s*(.+?)\s*\((\w+)\)\s*(?:-\s*(.+?))?(?:\n|$)',
+            result
+        )
+        for match in entity_simple:
+            ename, etype = match[0], match[1]
+            edesc = match[2] if match[2] else ename
+            lines.append(f"entity{td}{ename}{td}{etype}{td}{edesc}")
+        
+        rel_simple = _re.findall(
+            r'(?:RELATION|Relation):\s*(.+?)\s*(?:->|→|--)\s*(.+?)\s*:\s*(.+?)(?:\n|$)',
+            result
+        )
+        for match in rel_simple:
+            rsrc, rtgt, rkw = match[0].strip(), match[1].strip(), match[2].strip()
+            lines.append(f"relation{td}{rsrc}{td}{rtgt}{td}{rkw}{td}{rsrc} and {rtgt}")
+        
+        if lines:
+            logger.info(f"Converted labeled format: {len(lines)} records")
+            return "\n".join(lines) + f"\n{completion_delimiter}"
+        
+        # === Fallback: Markdown table format ===
+        table_rows = _re.findall(
+            r'^\|\s*([^|]+?)\s*\|\s*([^|]+?)\s*\|\s*([^|]+?)\s*\|',
+            result, _re.MULTILINE
+        )
+        for row in table_rows:
+            name, rtype, desc = row[0].strip(), row[1].strip(), row[2].strip()
+            if name.lower() in ('name', 'entity', 'source', '---', ''):
+                continue
+            if rtype.lower() in ('type', 'relationship', '---', ''):
+                continue
+            lines.append(f"entity{td}{name}{td}{rtype}{td}{desc}")
+        
+        if lines:
+            logger.info(f"Converted table format: {len(lines)} records")
+            return "\n".join(lines) + f"\n{completion_delimiter}"
+        
+        # === FINAL FALLBACK: Generic line-by-line entity extraction ===
+        # This handles ANY format by scanning each line for known entity type 
+        # keywords and extracting the associated name text.
+        # Works for: dash-delimited (-TYPE-name-), custom formats, mixed formats.
+        
+        # Extend with common LLM-invented types that map to standard types
+        TYPE_ALIASES = {
+            'LANGUAGE': 'TECHNOLOGY', 'FRAMEWORK': 'PRODUCT', 'TOOL': 'PRODUCT',
+            'LIBRARY': 'PRODUCT', 'SOFTWARE': 'PRODUCT', 'PLATFORM': 'PRODUCT',
+            'COMPANY': 'ORGANIZATION', 'INSTITUTION': 'ORGANIZATION',
+            'PEOPLE': 'PERSON', 'INDIVIDUAL': 'PERSON', 'CREATOR': 'PERSON',
+            'PLACE': 'LOCATION', 'CITY': 'LOCATION', 'COUNTRY': 'LOCATION',
+            'IDEA': 'CONCEPT', 'TOPIC': 'CONCEPT', 'SUBJECT': 'CONCEPT',
+            'INCIDENT': 'EVENT', 'OCCURRENCE': 'EVENT',
+            'DATE': 'EVENT', 'YEAR': 'EVENT',
+        }
+        ALL_TYPES = ENTITY_TYPES | set(TYPE_ALIASES.keys())
+        
+        generic_entities = {}  # type -> [names]
+        generic_rels = []
+        current_section = None  # 'entity', 'relation', 'concept', etc.
+        current_rel_keyword = None
+        
+        for raw_line in result.split('\n'):
+            stripped = raw_line.strip()
+            if not stripped:
+                continue
+            
+            # Detect section headers
+            low = stripped.lower().rstrip(':').strip()
+            if low in ('entity', 'entities'):
+                current_section = 'entity'
+                continue
+            elif low in ('relation', 'relationship', 'relationships'):
+                current_section = 'relation'
+                continue
+            elif low in ('concept', 'concepts', 'event', 'events', 
+                        'product', 'products', 'category', 'categories'):
+                current_section = 'entity'  # treat all as entity sections
+                continue
+            
+            # Try to find TYPE keywords on this line
+            # First, count how many TYPE keywords appear on this line
+            # If 2+, parse as multi-type relation line
+            type_matches = []
+            for tname in sorted(ALL_TYPES, key=len, reverse=True):
+                pattern = _re.compile(
+                    r'(?:^|[\s\-_|:,])' + _re.escape(tname) + r'(?:[\s\-_|:,]|$)',
+                    _re.IGNORECASE
+                )
+                for m in pattern.finditer(stripped):
+                    # Check it's not a substring of an already found match
+                    overlap = False
+                    for _, prev_start, prev_end in type_matches:
+                        if not (m.end() <= prev_start or m.start() >= prev_end):
+                            overlap = True
+                            break
+                    if not overlap:
+                        canonical_type = TYPE_ALIASES.get(tname.upper(), tname.upper())
+                        type_matches.append((canonical_type, m.start(), m.end()))
+            
+            if len(type_matches) >= 2:
+                # Multi-type line (likely a relation description)
+                # Parse as: TYPE1: name1 - TYPE2: name2 - TYPE3: name3
+                # Split on " - " and parse each segment
+                segments = _re.split(r'\s+-\s+', stripped.lstrip('- '))
+                parsed_pairs = []
+                for seg in segments:
+                    seg = seg.strip()
+                    seg_match = _re.match(r'^([A-Za-z][A-Za-z_\s]+?)\s*:\s*(.+)$', seg)
+                    if seg_match:
+                        stype_raw = seg_match.group(1).strip().upper()
+                        stype = TYPE_ALIASES.get(stype_raw, stype_raw)
+                        sname = seg_match.group(2).strip()
+                        if stype in ENTITY_TYPES and sname and sname.lower() != 'none':
+                            for n in sname.split(','):
+                                n = n.strip()
+                                if n and n.lower() != 'none':
+                                    parsed_pairs.append((stype, n))
+                
+                if len(parsed_pairs) >= 2:
+                    # Add entities and relations
+                    for ptype, pname in parsed_pairs:
+                        generic_entities.setdefault(ptype, []).append(pname)
+                    for i in range(1, len(parsed_pairs)):
+                        generic_rels.append((parsed_pairs[0][1], parsed_pairs[i][1], 'RELATED'))
+                    continue
+                elif len(parsed_pairs) == 1:
+                    # Only one valid entity found
+                    ptype, pname = parsed_pairs[0]
+                    generic_entities.setdefault(ptype, []).append(pname)
+                    continue
+            
+            # Single TYPE keyword: extract entity
+            found_type = None
+            found_name = None
+            
+            for tname in sorted(ALL_TYPES, key=len, reverse=True):
+                # Case-insensitive search for the type keyword
+                pattern = _re.compile(
+                    r'(?:^|[\s\-_|:,])' + _re.escape(tname) + r'(?:[\s\-_|:,]|$)',
+                    _re.IGNORECASE
+                )
+                m = pattern.search(stripped)
+                if m:
+                    found_type = TYPE_ALIASES.get(tname.upper(), tname.upper())
+                    # Extract the name: everything else on the line, cleaned up
+                    remaining = stripped[:m.start()] + stripped[m.end():]
+                    # Clean delimiters and whitespace
+                    remaining = _re.sub(r'^[\s\-_|:,.*]+|[\s\-_|:,.*]+$', '', remaining)
+                    # Remove common noise words
+                    remaining = _re.sub(r'^\s*(?:entity|relation|type|value|field)\s*:?\s*', '', remaining, flags=_re.IGNORECASE)
+                    remaining = remaining.strip(' -_|:,.*')
+                    
+                    if remaining and len(remaining) > 1:
+                        # Handle parenthetical notes: "Google (TensorFlow)" → name="Google", extra="TensorFlow"
+                        paren_match = _re.match(r'^(.+?)\s*\((.+?)\)\s*$', remaining)
+                        if paren_match:
+                            found_name = paren_match.group(1).strip()
+                            extra = paren_match.group(2).strip()
+                            # The parenthetical might be another entity name
+                            if extra and len(extra) > 1:
+                                # Store both as entities if they look like proper names
+                                if found_name[0].isupper():
+                                    generic_entities.setdefault(found_type, []).append(found_name)
+                                # Check if extra is also a proper name or known entity
+                                if extra[0].isupper():
+                                    # Create a relation between them
+                                    generic_rels.append((found_name, extra, 'RELATED'))
+                        else:
+                            found_name = remaining
+                        
+                        if found_name and len(found_name) > 1 and found_name[0].isupper():
+                            generic_entities.setdefault(found_type, []).append(found_name)
+                    break
+            
+            # If in relation section and we found relation keywords
+            if current_section == 'relation' and not found_type:
+                # Check if it's a relation keyword line like "-ORIGINATE-" or "-DEVELOP-"
+                keyword_match = _re.match(r'^[\-_|]*([A-Z][A-Z_]+)[\-_|]*$', stripped)
+                if keyword_match:
+                    current_rel_keyword = keyword_match.group(1)
+                    continue
+        
+        # Build entity lines
+        if generic_entities:
+            lines = []
+            all_entity_names = set()
+            for etype, names in generic_entities.items():
+                for name in set(names):  # deduplicate
+                    lines.append(f"entity{td}{name}{td}{etype}{td}{name}")
+                    all_entity_names.add(name)
+            
+            # Build relation lines from explicit rels and co-occurrence
+            for src, tgt, kw in generic_rels:
+                lines.append(f"relation{td}{src}{td}{tgt}{td}{kw}{td}{src} is related to {tgt}")
+            
+            # Add inferred relations if we have entities but no explicit relations
+            if not generic_rels:
+                name_list = list(all_entity_names)
+                if len(name_list) >= 2:
+                    for i in range(1, len(name_list)):
+                        lines.append(
+                            f"relation{td}{name_list[0]}{td}{name_list[i]}{td}RELATED{td}"
+                            f"{name_list[0]} is related to {name_list[i]}"
+                        )
+            
+            n_ent = sum(1 for l in lines if l.startswith('entity'))
+            n_rel = sum(1 for l in lines if l.startswith('relation'))
+            logger.info(f"Generic extraction: {n_ent} entities, {n_rel} relations")
+            return "\n".join(lines) + f"\n{completion_delimiter}"
+            
+    except Exception as e:
+        logger.warning(f"Format conversion failed: {e}")
+    
+    logger.warning(f"Could not convert LLM output to tuple format. First 200 chars: {result[:200]}")
+    return result
+
+
+# Wrap _convert_json_to_tuple_format to apply post-processing cleanup
+_convert_json_to_tuple_format_original = _convert_json_to_tuple_format
+
+def _convert_json_to_tuple_format(result: str, tuple_delimiter: str, completion_delimiter: str) -> str:
+    """Wrapper that applies entity name cleanup after conversion."""
+    converted = _convert_json_to_tuple_format_original(result, tuple_delimiter, completion_delimiter)
+    # Only clean if conversion produced tuple format (has entity/relation lines)
+    if converted and (f"entity{tuple_delimiter}" in converted or f"relation{tuple_delimiter}" in converted):
+        cleaned = _clean_entity_names_in_tuples(converted, tuple_delimiter)
+        return cleaned
+    return converted
+
+
+
 async def _process_extraction_result(
     result: str,
     chunk_key: str,
@@ -928,6 +1899,9 @@ async def _process_extraction_result(
     """
     maybe_nodes = defaultdict(list)
     maybe_edges = defaultdict(list)
+
+    # Try to convert JSON-format output from smaller LLMs to tuple format
+    result = _convert_json_to_tuple_format(result, tuple_delimiter, completion_delimiter)
 
     if completion_delimiter not in result:
         logger.warning(

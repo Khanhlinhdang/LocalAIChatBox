@@ -15,7 +15,7 @@ ERROR: Could not install packages due to an OSError: [Errno 28] No space left on
 ### Option 1: Script tự động (Recommended) ⚡
 
 ```bash
-ssh root@194.59.165.202
+ssh root@194.59.xxx.xxx
 cd ~/LocalAIChatBox
 git pull origin main
 
@@ -35,7 +35,7 @@ bash cleanup_docker.sh
 ### Option 2: Manual cleanup (Step by step)
 
 ```bash
-ssh root@194.59.165.202
+ssh root@194.59.xxx.xxx
 
 # 1. Kiểm tra dung lượng hiện tại
 df -h

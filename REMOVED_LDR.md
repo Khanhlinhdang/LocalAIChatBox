@@ -34,7 +34,7 @@
 ## 🚀 Deploy trên VPS (PHẢI REBUILD):
 
 ```bash
-ssh root@194.59.165.202
+ssh root@194.59.xxx.xxx
 cd ~/LocalAIChatBox
 
 # Pull code mới
@@ -72,15 +72,15 @@ ragchat-backend  | INFO:     Uvicorn running on http://0.0.0.0:8000
 
 ```bash
 # Test health check
-curl http://194.59.165.202:81/api/health
+curl http://194.59.xxx.xxx:81/api/health
 
 # Test login
-curl -X POST http://194.59.165.202:81/api/auth/login \
+curl -X POST http://194.59.xxx.xxx:81/api/auth/login \
   -H "Content-Type: application/json" \
   -d '{"username":"admin","password":"admin123"}'
 
 # Mở browser
-# http://194.59.165.202:81
+# http://194.59.xxx.xxx:81
 ```
 
 ## 💡 Nếu muốn enable Deep Research lại:

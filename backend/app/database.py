@@ -54,6 +54,9 @@ def run_migrations():
         if "documents" in existing_tables:
             _safe_add_column(conn, "documents", "tenant_id", "INTEGER")
             _safe_add_column(conn, "documents", "is_encrypted", "BOOLEAN", "false")
+            _safe_add_column(conn, "documents", "folder_id", "INTEGER")
+            _safe_add_column(conn, "documents", "version", "INTEGER", "1")
+            _safe_add_column(conn, "documents", "description", "TEXT")
 
         if "folders" in existing_tables:
             _safe_add_column(conn, "folders", "tenant_id", "INTEGER")
@@ -62,9 +65,11 @@ def run_migrations():
         if "research_tasks" in existing_tables:
             _safe_add_column(conn, "research_tasks", "result_metadata", "TEXT")
 
-        # Phase 6: Add session_id to conversations for chat sessions
+        # Phase 6: Add session_id, entities_found, search_mode to conversations
         if "conversations" in existing_tables:
             _safe_add_column(conn, "conversations", "session_id", "VARCHAR(36)")
+            _safe_add_column(conn, "conversations", "entities_found", "TEXT")
+            _safe_add_column(conn, "conversations", "search_mode", "VARCHAR(20)", "'hybrid'")
 
         conn.commit()
         logger.info("Database migration completed (Phase 6)")

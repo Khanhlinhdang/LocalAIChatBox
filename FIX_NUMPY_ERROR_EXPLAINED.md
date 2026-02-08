@@ -103,7 +103,7 @@ RUN pip install -r requirements.txt
 
 ```bash
 # 1. SSH vào VPS
-ssh root@194.59.165.202
+ssh root@194.59.xxx.xxx
 cd ~/LocalAIChatBox
 
 # 2. Pull code mới
@@ -188,13 +188,13 @@ exit
 ## 🎉 Sau khi fix thành công:
 
 1. **Test login:**
-   - URL: http://194.59.165.202:81
+   - URL: http://194.59.xxx.xxx:81
    - Username: `admin`
    - Password: `admin123`
 
 2. **Test API:**
    ```bash
-   curl http://194.59.165.202:81/api/health
+   curl http://194.59.xxx.xxx:81/api/health
    # Expected: {"status": "healthy", ...}
    ```
 

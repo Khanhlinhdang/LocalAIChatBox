@@ -2,7 +2,7 @@
 __pycache__/
 *.py[codz]
 *$py.class
-
+vps_infor.py
 # C extensions
 *.so
 
