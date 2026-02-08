@@ -374,7 +374,7 @@ async def update_ldr_settings(
 @router.get("/api/research/{task_id}/export")
 async def export_research(
     task_id: str,
-    format: str = Query("markdown", regex="^(markdown|json|pdf|docx)$"),
+    format: str = Query("markdown", pattern="^(markdown|json|pdf|docx)$"),
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db)
 ):
@@ -420,7 +420,7 @@ async def get_search_engines(
         for name, engine in meta.engines.items():
             engines.append({
                 "name": name,
-                "available": engine.available,
+                "available": engine.is_available,
                 "requires_api_key": hasattr(engine, 'api_key') and engine.api_key is None,
             })
         return {"engines": engines}
