@@ -149,7 +149,7 @@ async def startup_event():
     try:
         from app.search_engines import get_meta_search_engine
         meta = get_meta_search_engine()
-        available = [n for n, e in meta.engines.items() if e.available]
+        available = [n for n, e in meta.engines.items() if e.is_available]
         print(f"Multi-Engine Search initialized: {', '.join(available)}")
     except Exception as e:
         print(f"Warning: Multi-Engine Search init failed (non-fatal): {e}")
