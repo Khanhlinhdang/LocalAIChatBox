@@ -62,9 +62,13 @@ def run_migrations():
         if "research_tasks" in existing_tables:
             _safe_add_column(conn, "research_tasks", "result_metadata", "TEXT")
 
+        # Phase 6: Add session_id to conversations for chat sessions
+        if "conversations" in existing_tables:
+            _safe_add_column(conn, "conversations", "session_id", "VARCHAR(36)")
+
         conn.commit()
-        logger.info("Database migration completed (Phase 5)")
-        print("Database migration completed (Phase 5)")
+        logger.info("Database migration completed (Phase 6)")
+        print("Database migration completed (Phase 6)")
 
 
 def init_db():

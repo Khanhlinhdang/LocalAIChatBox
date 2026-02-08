@@ -186,6 +186,13 @@ services:
       - WEBHOOK_ENABLED=${WEBHOOK_ENABLED:-false}
       - WEBHOOK_URL=${WEBHOOK_URL:-}
       - WEBHOOK_SECRET=${WEBHOOK_SECRET:-}
+      # Phase 6 - LightRAG
+      - LLM_TIMEOUT=600
+      - LIGHTRAG_WORKING_DIR=/app/data/lightrag_storage
+      - LIGHTRAG_EMBED_MODEL=nomic-embed-text:latest
+      - LIGHTRAG_CHUNK_SIZE=800
+      - LIGHTRAG_CHUNK_OVERLAP=100
+      - LIGHTRAG_LANGUAGE=Vietnamese
     volumes:
       - ./data/vector_store:/app/data/vector_store
       - ./data/documents:/app/data/documents

@@ -37,8 +37,8 @@ async def ollama_llm_complete(
     kwargs.pop("hashing_kv", None)
     host = kwargs.pop("host", None) or os.getenv("OLLAMA_HOST", "http://ollama:11434")
     timeout = kwargs.pop("timeout", None)
-    if timeout == 0:
-        timeout = None
+    if timeout == 0 or timeout is None:
+        timeout = float(os.getenv("LLM_TIMEOUT", "600"))  # Match LightRAG timeout
     model = kwargs.pop("model", None) or os.getenv("OLLAMA_LLM_MODEL", "llama3.1")
     kwargs.pop("api_key", None)
     kwargs.pop("keyword_extraction", None)
@@ -183,14 +183,14 @@ class LightRAGService:
                     graph_storage="NetworkXStorage",
                     doc_status_storage="JsonDocStatusStorage",
                     # Chunking config
-                    chunk_token_size=int(os.getenv("LIGHTRAG_CHUNK_SIZE", "1200")),
+                    chunk_token_size=int(os.getenv("LIGHTRAG_CHUNK_SIZE", "800")),
                     chunk_overlap_token_size=int(os.getenv("LIGHTRAG_CHUNK_OVERLAP", "100")),
-                    # Entity extraction
-                    entity_extract_max_gleaning=1,
+                    # Entity extraction 
+                    entity_extract_max_gleaning=0,  # No re-extraction (faster)
                     # Query defaults
                     max_graph_nodes=int(os.getenv("LIGHTRAG_MAX_GRAPH_NODES", "1000")),
-                    # LLM settings
-                    llm_model_max_async=4,
+                    # LLM settings - reduced for CPU-only VPS
+                    llm_model_max_async=2,
                     embedding_batch_num=10,
                     embedding_func_max_async=4,
                     enable_llm_cache=True,

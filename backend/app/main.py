@@ -822,7 +822,7 @@ async def health_check(db: Session = Depends(get_db)):
     health_status = {
         "status": "healthy",
         "service": "LocalAIChatBox",
-        "version": "3.0 - Multimodal RAG",
+        "version": "6.0.0 - LightRAG Edition",
         "services": {}
     }
 
