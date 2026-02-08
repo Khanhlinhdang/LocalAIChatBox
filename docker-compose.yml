@@ -27,6 +27,9 @@ services:
   ollama:
     image: ollama/ollama:latest
     container_name: ragchat-ollama
+    environment:
+      - OLLAMA_KEEP_ALIVE=30s
+      - OLLAMA_NUM_PARALLEL=1
     volumes:
       - ollama_data:/root/.ollama
     ports:
@@ -193,6 +196,7 @@ services:
       - LIGHTRAG_CHUNK_SIZE=800
       - LIGHTRAG_CHUNK_OVERLAP=100
       - LIGHTRAG_LANGUAGE=Vietnamese
+      - LIGHTRAG_NUM_CTX=4096
     volumes:
       - ./data/vector_store:/app/data/vector_store
       - ./data/documents:/app/data/documents

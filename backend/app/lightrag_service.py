@@ -53,7 +53,16 @@ async def ollama_llm_complete(
     
     client = ollama_lib.AsyncClient(host=host, timeout=timeout)
     try:
-        response = await client.chat(model=model, messages=messages, stream=stream, **kwargs)
+        # Limit context window to prevent OOM on memory-constrained servers
+        num_ctx = int(os.getenv("LIGHTRAG_NUM_CTX", "4096"))
+        options = kwargs.pop("options", {})
+        if "num_ctx" not in options:
+            options["num_ctx"] = num_ctx
+        
+        response = await client.chat(
+            model=model, messages=messages, stream=stream,
+            options=options, **kwargs
+        )
         if stream:
             async def inner():
                 try:
@@ -190,9 +199,9 @@ class LightRAGService:
                     # Query defaults
                     max_graph_nodes=int(os.getenv("LIGHTRAG_MAX_GRAPH_NODES", "1000")),
                     # LLM settings - reduced for CPU-only VPS
-                    llm_model_max_async=2,
-                    embedding_batch_num=10,
-                    embedding_func_max_async=4,
+                    llm_model_max_async=1,
+                    embedding_batch_num=5,
+                    embedding_func_max_async=2,
                     enable_llm_cache=True,
                     addon_params={
                         "language": os.getenv("LIGHTRAG_LANGUAGE", "Vietnamese"),
