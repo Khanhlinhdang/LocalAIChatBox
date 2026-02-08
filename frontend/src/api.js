@@ -396,4 +396,117 @@ export const exportAuditCSV = (startDate = null, endDate = null) => {
   return api.get(`/enterprise/compliance/audit-csv?${params}`, { responseType: 'blob' });
 };
 
+// ==================== LightRAG ====================
+
+// LightRAG Health
+export const getLightRAGHealth = () =>
+  api.get('/lightrag/health');
+
+// LightRAG Query
+export const lightragQuery = (query, mode = 'hybrid', options = {}) =>
+  api.post('/lightrag/query', {
+    query,
+    mode,
+    ...options
+  });
+
+export const lightragQueryWithContext = (query, mode = 'hybrid', top_k = null) =>
+  api.post('/lightrag/query/context', { query, mode, top_k });
+
+// LightRAG Streaming Query
+export const lightragQueryStream = async (query, mode = 'hybrid', options = {}, onChunk) => {
+  const token = localStorage.getItem('token');
+  const response = await fetch(`${API_BASE}/lightrag/query/stream`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      'Authorization': `Bearer ${token}`,
+    },
+    body: JSON.stringify({ query, mode, stream: true, ...options }),
+  });
+
+  if (!response.ok) throw new Error(`Stream error: ${response.statusText}`);
+
+  const reader = response.body.getReader();
+  const decoder = new TextDecoder();
+  let buffer = '';
+
+  while (true) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    buffer += decoder.decode(value, { stream: true });
+    const lines = buffer.split('\n');
+    buffer = lines.pop();
+    for (const line of lines) {
+      if (line.trim()) {
+        try {
+          const data = JSON.parse(line);
+          if (data.chunk) onChunk(data.chunk);
+          if (data.done) return;
+          if (data.error) throw new Error(data.error);
+        } catch (e) {
+          if (e.message !== 'Unexpected end of JSON input') console.warn('Parse error:', e);
+        }
+      }
+    }
+  }
+};
+
+// LightRAG Strategies
+export const getLightRAGStrategies = () =>
+  api.get('/lightrag/strategies');
+
+// LightRAG Documents
+export const getLightRAGDocuments = (status = null) =>
+  api.get('/lightrag/documents', { params: status ? { status } : {} });
+
+export const lightragInsertText = (text, file_path = null) =>
+  api.post('/lightrag/documents/text', { text, file_path });
+
+export const lightragUploadDocument = (file) => {
+  const formData = new FormData();
+  formData.append('file', file);
+  return api.post('/lightrag/documents/upload', formData, {
+    headers: { 'Content-Type': 'multipart/form-data' },
+    timeout: 600000,
+  });
+};
+
+export const lightragDeleteDocument = (docId) =>
+  api.delete(`/lightrag/documents/${docId}`);
+
+export const lightragClearDocuments = () =>
+  api.delete('/lightrag/documents');
+
+export const getLightRAGPipelineStatus = () =>
+  api.get('/lightrag/documents/pipeline_status');
+
+export const getLightRAGDocumentStatusCounts = () =>
+  api.get('/lightrag/documents/status_counts');
+
+// LightRAG Graph
+export const getLightRAGGraph = (label = null, maxDepth = 3, maxNodes = 1000) =>
+  api.get('/lightrag/graphs', { params: { label, max_depth: maxDepth, max_nodes: maxNodes } });
+
+export const getLightRAGLabels = () =>
+  api.get('/lightrag/graph/label/list');
+
+export const getLightRAGPopularLabels = (limit = 10) =>
+  api.get('/lightrag/graph/label/popular', { params: { limit } });
+
+export const searchLightRAGLabels = (q, limit = 10) =>
+  api.get('/lightrag/graph/label/search', { params: { q, limit } });
+
+export const searchLightRAGEntities = (q) =>
+  api.get('/lightrag/graph/entity/search', { params: { q } });
+
+export const checkLightRAGEntityExists = (name) =>
+  api.get('/lightrag/graph/entity/exists', { params: { name } });
+
+export const editLightRAGEntity = (entityName, data) =>
+  api.post('/lightrag/graph/entity/edit', { entity_name: entityName, ...data });
+
+export const editLightRAGRelation = (source, target, data) =>
+  api.post('/lightrag/graph/relation/edit', { source, target, ...data });
+
 export default api;

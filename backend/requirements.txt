@@ -49,3 +49,14 @@ ldap3
 
 # Phase 5 - Advanced Research
 fpdf2
+
+# Phase 6 - LightRAG Engine
+ollama
+tenacity
+nano-vectordb
+tiktoken
+pipmaster
+xxhash
+aioboto3
+json-repair
+numpy

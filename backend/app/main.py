@@ -33,6 +33,7 @@ from app.enhanced_rag_engine import get_rag_engine
 from app.knowledge_graph import get_kg_engine
 from app.research_routes import router as research_router
 from app.enterprise_routes import router as enterprise_router
+from app.lightrag_routes import router as lightrag_router
 from app.analytics import (
     log_usage, get_usage_overview, get_daily_activity,
     get_top_users, get_popular_queries, get_document_stats,
@@ -47,8 +48,8 @@ from fastapi.responses import Response
 
 app = FastAPI(
     title="LocalAIChatBox API",
-    version="5.0.0",
-    description="Multimodal RAG Chat System with Knowledge Graph, Deep Research & Advanced Search"
+    version="6.0.0",
+    description="Multimodal RAG Chat System with LightRAG Knowledge Graph, Deep Research & Advanced Search"
 )
 
 # Security middleware (must be added before CORS)
@@ -73,6 +74,9 @@ app.include_router(research_router)
 
 # Mount enterprise router
 app.include_router(enterprise_router, prefix="/api/enterprise", tags=["Enterprise"])
+
+# Mount LightRAG router
+app.include_router(lightrag_router)
 
 
 @app.on_event("startup")
@@ -190,7 +194,21 @@ async def startup_event():
     except Exception as e:
         print(f"Warning: Enhanced RAG Engine init failed (non-fatal): {e}")
 
-    print("LocalAIChatBox Server Started (v5.0 - Advanced Research Edition)")
+    # Initialize LightRAG engine
+    try:
+        from app.lightrag_service import get_lightrag_service
+        lightrag_svc = get_lightrag_service()
+        initialized = await lightrag_svc.initialize()
+        if initialized:
+            health = await lightrag_svc.get_health()
+            print(f"LightRAG Engine initialized: {health.get('graph_nodes', 0)} nodes, {health.get('graph_edges', 0)} edges")
+            print(f"  LLM: {health.get('llm_model')}, Embed: {health.get('embed_model')}")
+        else:
+            print("Warning: LightRAG initialization failed (will retry on first request)")
+    except Exception as e:
+        print(f"Warning: LightRAG init failed (non-fatal): {e}")
+
+    print("LocalAIChatBox Server Started (v6.0 - LightRAG Edition)")
 
 
 # ==================== SCHEMAS ====================

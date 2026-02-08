@@ -60,7 +60,7 @@ services:
         condition: service_healthy
     environment:
       - OLLAMA_HOST=http://ollama:11434
-      - OLLAMA_MODELS=llama3.1 llava
+      - OLLAMA_MODELS=llama3.1 llava nomic-embed-text
     entrypoint: ["/bin/sh", "-c"]
     command:
       - |
@@ -107,11 +107,12 @@ services:
       - ./data/vector_store:/data/vector_store
       - ./data/documents:/data/documents
       - ./data/parser_output:/data/parser_output
+      - ./data/lightrag_storage:/data/lightrag_storage
     entrypoint: ["/bin/sh", "-c"]
     command:
       - |
         echo "=== Data Directory Initializer ==="
-        for dir in /data/vector_store /data/documents /data/parser_output; do
+        for dir in /data/vector_store /data/documents /data/parser_output /data/lightrag_storage; do
           mkdir -p "$$dir"
           chown -R 1000:1000 "$$dir"
           chmod -R 755 "$$dir"
@@ -189,6 +190,7 @@ services:
       - ./data/vector_store:/app/data/vector_store
       - ./data/documents:/app/data/documents
       - ./data/parser_output:/app/data/parser_output
+      - ./data/lightrag_storage:/app/data/lightrag_storage
       - sentence_transformer_cache:/home/appuser/.cache/torch/sentence_transformers
     ports:
       - "8001:8000"

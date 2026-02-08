@@ -50,7 +50,7 @@ ENV PYTHONUNBUFFERED=1 \
 COPY backend/app /app/app
 
 # Create data directories with proper permissions
-RUN mkdir -p /app/data/documents /app/data/vector_store /app/data/parser_output && \
+RUN mkdir -p /app/data/documents /app/data/vector_store /app/data/parser_output /app/data/lightrag_storage /app/data/lightrag_uploads && \
     chmod -R 755 /app/data && \
     chown -R appuser:appuser /app
 

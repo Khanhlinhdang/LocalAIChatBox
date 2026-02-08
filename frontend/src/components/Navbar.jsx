@@ -26,6 +26,15 @@ function Navbar({ user, onLogout }) {
         <Link to="/knowledge-graph" className={location.pathname === '/knowledge-graph' ? 'active' : ''}>
           Graph
         </Link>
+        <Link to="/lightrag-graph" className={location.pathname === '/lightrag-graph' ? 'active' : ''}>
+          ⚡KG
+        </Link>
+        <Link to="/lightrag-documents" className={location.pathname === '/lightrag-documents' ? 'active' : ''}>
+          ⚡Docs
+        </Link>
+        <Link to="/lightrag-query" className={location.pathname === '/lightrag-query' ? 'active' : ''}>
+          ⚡Query
+        </Link>
         <Link to="/analytics" className={location.pathname === '/analytics' ? 'active' : ''}>
           Analytics
         </Link>

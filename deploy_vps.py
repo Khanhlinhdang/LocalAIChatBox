@@ -36,7 +36,7 @@ def main():
     print("\n" + "="*60)
     print("STEP 2: Create data directories")
     print("="*60)
-    run_ssh(ssh, 'mkdir -p /root/LocalAIChatBox/data/{vector_store,documents,parser_output}')
+    run_ssh(ssh, 'mkdir -p /root/LocalAIChatBox/data/{vector_store,documents,parser_output,lightrag_storage}')
     run_ssh(ssh, 'chmod -R 777 /root/LocalAIChatBox/data/')
     
     # Step 3: Stop old containers
