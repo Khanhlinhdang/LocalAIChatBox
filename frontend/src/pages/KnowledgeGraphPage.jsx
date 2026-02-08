@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useCallback, useRef } from 'react';
 import { getKGStats, getKGEntities, searchKGEntities, getKGEntity, rebuildKG, getKGFullGraph, exportKnowledgeGraph } from '../api';
+import LightRAGGraphPage from './LightRAGGraphPage';
 
 const ENTITY_COLORS = {
   PERSON: '#ff6b6b', ORGANIZATION: '#4ecdc4', PROJECT: '#45b7d1',
@@ -219,6 +220,7 @@ function useForceGraph(canvasRef, graphData, onNodeClick) {
 }
 
 function KnowledgeGraphPage({ user }) {
+  const [activeTab, setActiveTab] = useState('graph');
   const [stats, setStats] = useState(null);
   const [entities, setEntities] = useState([]);
   const [fullGraph, setFullGraph] = useState(null);
@@ -301,12 +303,43 @@ function KnowledgeGraphPage({ user }) {
   const filteredEntities = filterType === 'ALL' ? entities : entities.filter(e => e.type === filterType);
   const entityTypes = [...new Set(entities.map(e => e.type))];
 
-  if (loading) {
+  if (loading && activeTab === 'graph') {
     return <div className="kg-page"><p style={{ textAlign: 'center', color: 'var(--text-secondary)', padding: 40 }}>Loading Knowledge Graph...</p></div>;
   }
 
   return (
     <div className="kg-page">
+      {/* Tab Switcher */}
+      <div style={{
+        display: 'flex', gap: 0, marginBottom: 0, borderBottom: '1px solid var(--border)',
+        background: 'var(--bg-secondary)', padding: '0 16px',
+      }}>
+        <button
+          onClick={() => setActiveTab('graph')}
+          style={{
+            padding: '12px 20px', border: 'none', cursor: 'pointer', fontSize: 14, fontWeight: 500,
+            background: activeTab === 'graph' ? 'var(--bg-primary)' : 'transparent',
+            color: activeTab === 'graph' ? 'var(--accent)' : 'var(--text-secondary)',
+            borderBottom: activeTab === 'graph' ? '2px solid var(--accent)' : '2px solid transparent',
+            transition: 'all 0.2s',
+          }}
+        >🔗 Knowledge Graph</button>
+        <button
+          onClick={() => setActiveTab('lightrag')}
+          style={{
+            padding: '12px 20px', border: 'none', cursor: 'pointer', fontSize: 14, fontWeight: 500,
+            background: activeTab === 'lightrag' ? 'var(--bg-primary)' : 'transparent',
+            color: activeTab === 'lightrag' ? '#eab308' : 'var(--text-secondary)',
+            borderBottom: activeTab === 'lightrag' ? '2px solid #eab308' : '2px solid transparent',
+            transition: 'all 0.2s',
+          }}
+        >⚡ LightRAG Graph</button>
+      </div>
+
+      {activeTab === 'lightrag' ? (
+        <LightRAGGraphPage />
+      ) : (
+      <>
       <div className="kg-header">
         <h1>Knowledge Graph</h1>
         <div className="kg-header-actions">
@@ -456,6 +489,8 @@ function KnowledgeGraphPage({ user }) {
             </div>
           )}
         </div>
+      )}
+      </>
       )}
     </div>
   );

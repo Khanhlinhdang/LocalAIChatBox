@@ -10,9 +10,6 @@ import SettingsPage from './pages/SettingsPage';
 import AdminPage from './pages/AdminPage';
 import AnalyticsPage from './pages/AnalyticsPage';
 import EnterprisePage from './pages/EnterprisePage';
-import LightRAGGraphPage from './pages/LightRAGGraphPage';
-import LightRAGDocumentsPage from './pages/LightRAGDocumentsPage';
-import LightRAGQueryPage from './pages/LightRAGQueryPage';
 import Navbar from './components/Navbar';
 import './App.css';
 
@@ -64,9 +61,9 @@ function App() {
             <Route path="/documents" element={<DocumentsPage user={user} />} />
             <Route path="/research" element={<DeepResearchPage user={user} />} />
             <Route path="/knowledge-graph" element={<KnowledgeGraphPage user={user} />} />
-            <Route path="/lightrag-graph" element={<LightRAGGraphPage />} />
-            <Route path="/lightrag-documents" element={<LightRAGDocumentsPage />} />
-            <Route path="/lightrag-query" element={<LightRAGQueryPage />} />
+            <Route path="/lightrag-graph" element={<Navigate to="/knowledge-graph" />} />
+            <Route path="/lightrag-documents" element={<Navigate to="/documents" />} />
+            <Route path="/lightrag-query" element={<Navigate to="/" />} />
             <Route path="/analytics" element={<AnalyticsPage user={user} />} />
             {user.is_admin && (
               <>

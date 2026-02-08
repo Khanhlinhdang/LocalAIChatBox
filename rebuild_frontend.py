@@ -1,7 +1,8 @@
 import paramiko, time, json
 ssh = paramiko.SSHClient()
 ssh.set_missing_host_key_policy(paramiko.AutoAddPolicy())
-ssh.connect('194.59.xxx.xxx', username='root', password='password')
+from vps_infor import ip, username, password
+ssh.connect(ip, username=username, password=password)
 print('Connected! Rebuilding frontend...')
 
 cmds = [

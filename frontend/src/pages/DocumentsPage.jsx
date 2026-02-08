@@ -7,8 +7,11 @@ import {
   uploadDocumentVersion, getDocumentVersions,
   searchDocumentsAdvanced, exportDocumentsList
 } from '../api';
+import LightRAGDocumentsPage from './LightRAGDocumentsPage';
 
 function DocumentsPage({ user }) {
+  // Tab: 'documents' | 'lightrag'
+  const [activeTab, setActiveTab] = useState('documents');
   const [documents, setDocuments] = useState([]);
   const [folders, setFolders] = useState([]);
   const [tags, setTags] = useState([]);
@@ -181,6 +184,37 @@ function DocumentsPage({ user }) {
 
   return (
     <div className="documents-page">
+      {/* Tab Switcher */}
+      <div style={{
+        display: 'flex', gap: 0, marginBottom: 0, borderBottom: '1px solid var(--border)',
+        background: 'var(--bg-secondary)', padding: '0 16px',
+      }}>
+        <button
+          onClick={() => setActiveTab('documents')}
+          style={{
+            padding: '12px 20px', border: 'none', cursor: 'pointer', fontSize: 14, fontWeight: 500,
+            background: activeTab === 'documents' ? 'var(--bg-primary)' : 'transparent',
+            color: activeTab === 'documents' ? 'var(--accent)' : 'var(--text-secondary)',
+            borderBottom: activeTab === 'documents' ? '2px solid var(--accent)' : '2px solid transparent',
+            transition: 'all 0.2s',
+          }}
+        >📁 Documents</button>
+        <button
+          onClick={() => setActiveTab('lightrag')}
+          style={{
+            padding: '12px 20px', border: 'none', cursor: 'pointer', fontSize: 14, fontWeight: 500,
+            background: activeTab === 'lightrag' ? 'var(--bg-primary)' : 'transparent',
+            color: activeTab === 'lightrag' ? '#eab308' : 'var(--text-secondary)',
+            borderBottom: activeTab === 'lightrag' ? '2px solid #eab308' : '2px solid transparent',
+            transition: 'all 0.2s',
+          }}
+        >⚡ LightRAG Index</button>
+      </div>
+
+      {activeTab === 'lightrag' ? (
+        <LightRAGDocumentsPage />
+      ) : (
+      <>
       <div className="docs-header">
         <h1>Knowledge Base</h1>
         <div className="docs-header-actions">
@@ -445,6 +479,8 @@ function DocumentsPage({ user }) {
             <button className="btn btn-outline" onClick={() => setShowMoveModal(null)} style={{ marginTop: 12 }}>Cancel</button>
           </div>
         </div>
+      )}
+      </>
       )}
     </div>
   );
