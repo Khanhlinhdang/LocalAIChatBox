@@ -257,6 +257,44 @@ export const deleteResearch = (taskId) =>
 export const getStrategies = () =>
   api.get('/research/strategies');
 
+// Research Export (PDF/DOCX/MD/JSON)
+export const exportResearchAs = (taskId, format = 'markdown') =>
+  api.get(`/research/${taskId}/export?format=${format}`, { responseType: 'blob' });
+
+// Research SSE Streaming
+export const streamResearchProgress = (taskId) => {
+  const token = localStorage.getItem('token');
+  const baseUrl = process.env.REACT_APP_API_URL || '/api';
+  return new EventSource(`${baseUrl}/research/${taskId}/stream?token=${token}`);
+};
+
+// Search Engines
+export const getSearchEngines = () =>
+  api.get('/search/engines');
+
+export const testSearch = (query, engine = 'auto') =>
+  api.post(`/search/test?query=${encodeURIComponent(query)}&engine=${engine}`);
+
+// Token Usage
+export const getTokenStats = (days = 30) =>
+  api.get(`/tokens/stats?days=${days}`);
+
+export const getAllTokenStats = (days = 30) =>
+  api.get(`/tokens/stats/all?days=${days}`);
+
+// Research Scheduler
+export const createResearchSchedule = (name, query, strategy = 'source-based', intervalHours = 24) =>
+  api.post('/research/schedules', { name, query, strategy, interval_hours: intervalHours });
+
+export const getResearchSchedules = () =>
+  api.get('/research/schedules');
+
+export const updateResearchSchedule = (scheduleId, data) =>
+  api.put(`/research/schedules/${scheduleId}`, data);
+
+export const deleteResearchSchedule = (scheduleId) =>
+  api.delete(`/research/schedules/${scheduleId}`);
+
 // Settings
 export const getLDRSettings = () =>
   api.get('/settings/ldr');

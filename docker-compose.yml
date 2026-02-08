@@ -173,6 +173,18 @@ services:
       - LDAP_USE_TLS=${LDAP_USE_TLS:-false}
       - LDAP_AUTO_CREATE_USERS=${LDAP_AUTO_CREATE_USERS:-true}
       - LDAP_DEFAULT_ROLE=${LDAP_DEFAULT_ROLE:-editor}
+      # Phase 5 - Advanced Research
+      - BRAVE_SEARCH_API_KEY=${BRAVE_SEARCH_API_KEY:-}
+      - SMTP_ENABLED=${SMTP_ENABLED:-false}
+      - SMTP_HOST=${SMTP_HOST:-}
+      - SMTP_PORT=${SMTP_PORT:-587}
+      - SMTP_USER=${SMTP_USER:-}
+      - SMTP_PASSWORD=${SMTP_PASSWORD:-}
+      - SMTP_FROM=${SMTP_FROM:-noreply@localchatbox.local}
+      - SMTP_USE_TLS=${SMTP_USE_TLS:-true}
+      - WEBHOOK_ENABLED=${WEBHOOK_ENABLED:-false}
+      - WEBHOOK_URL=${WEBHOOK_URL:-}
+      - WEBHOOK_SECRET=${WEBHOOK_SECRET:-}
     volumes:
       - ./data/vector_store:/app/data/vector_store
       - ./data/documents:/app/data/documents

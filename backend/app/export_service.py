@@ -1,19 +1,23 @@
 """
 Export Service for LocalAIChatBox.
 Exports chat history, research reports, knowledge graph data,
-and analytics as JSON, CSV, or Markdown.
+and analytics as JSON, CSV, Markdown, PDF, or DOCX.
 
-Inspired by LightRAG's structured data export and RAG-Anything's
-batch processing output patterns.
+Supports structured report export with table of contents,
+citations, and formatted output.
 """
 
 import csv
 import io
 import json
+import re
 from datetime import datetime
 from typing import Dict, List, Optional
 from sqlalchemy.orm import Session
 from app.models import Conversation, ChatSession, ResearchTask, Document, UsageLog, User
+
+import logging
+logger = logging.getLogger(__name__)
 
 
 def export_chat_history(db: Session, user_id: int, session_id: str = None,
@@ -149,7 +153,250 @@ def export_research_report(db: Session, task_id: str, user_id: int,
             "content_type": "application/json",
         }
 
+    elif format == "pdf":
+        return _export_research_pdf(task, task_id)
+
+    elif format == "docx":
+        return _export_research_docx(task, task_id)
+
     raise ValueError(f"Unsupported format: {format}")
+
+
+def _export_research_pdf(task, task_id: str) -> Dict:
+    """Export research report as PDF using fpdf2."""
+    try:
+        from fpdf import FPDF
+    except ImportError:
+        logger.warning("fpdf2 not installed, falling back to markdown")
+        raise ValueError("PDF export requires fpdf2 package. Install with: pip install fpdf2")
+
+    class ResearchPDF(FPDF):
+        def header(self):
+            self.set_font("Helvetica", "B", 10)
+            self.cell(0, 10, "LocalAIChatBox - Research Report", border=False, align="R")
+            self.ln(5)
+            self.set_draw_color(66, 133, 244)
+            self.line(10, self.get_y(), 200, self.get_y())
+            self.ln(5)
+
+        def footer(self):
+            self.set_y(-15)
+            self.set_font("Helvetica", "I", 8)
+            self.cell(0, 10, f"Page {self.page_no()}/{{nb}}", align="C")
+
+        def chapter_title(self, title):
+            self.set_font("Helvetica", "B", 14)
+            self.set_text_color(33, 37, 41)
+            self.cell(0, 10, title, new_x="LMARGIN", new_y="NEXT")
+            self.set_draw_color(66, 133, 244)
+            self.line(10, self.get_y(), 200, self.get_y())
+            self.ln(4)
+
+        def chapter_body(self, text):
+            self.set_font("Helvetica", "", 10)
+            self.set_text_color(52, 58, 64)
+            # Clean markdown formatting for PDF
+            clean = _clean_markdown_for_pdf(text)
+            self.multi_cell(0, 6, clean)
+            self.ln(4)
+
+    pdf = ResearchPDF()
+    pdf.alias_nb_pages()
+    pdf.add_page()
+    pdf.set_auto_page_break(auto=True, margin=20)
+
+    # Title
+    pdf.set_font("Helvetica", "B", 20)
+    pdf.set_text_color(33, 37, 41)
+    pdf.cell(0, 15, "Research Report", new_x="LMARGIN", new_y="NEXT", align="C")
+    pdf.ln(5)
+
+    # Metadata
+    pdf.set_font("Helvetica", "", 10)
+    pdf.set_text_color(108, 117, 125)
+    pdf.cell(0, 6, f"Query: {task.query}", new_x="LMARGIN", new_y="NEXT")
+    pdf.cell(0, 6, f"Strategy: {task.strategy}", new_x="LMARGIN", new_y="NEXT")
+    pdf.cell(0, 6, f"Created: {task.created_at.strftime('%Y-%m-%d %H:%M')} UTC", new_x="LMARGIN", new_y="NEXT")
+    if task.completed_at:
+        pdf.cell(0, 6, f"Completed: {task.completed_at.strftime('%Y-%m-%d %H:%M')} UTC", new_x="LMARGIN", new_y="NEXT")
+    pdf.ln(10)
+
+    # Findings
+    if task.result_knowledge:
+        pdf.chapter_title("Key Findings")
+        pdf.chapter_body(task.result_knowledge)
+
+    # Report
+    if task.result_report:
+        pdf.chapter_title("Detailed Report")
+        # Split report by sections (## headers)
+        sections = re.split(r'\n##\s+', task.result_report)
+        for i, section in enumerate(sections):
+            if i == 0:
+                pdf.chapter_body(section)
+            else:
+                lines = section.split('\n', 1)
+                pdf.set_font("Helvetica", "B", 12)
+                pdf.set_text_color(52, 58, 64)
+                pdf.cell(0, 8, lines[0].strip(), new_x="LMARGIN", new_y="NEXT")
+                pdf.ln(2)
+                if len(lines) > 1:
+                    pdf.chapter_body(lines[1])
+
+    # Sources
+    if task.result_sources:
+        pdf.chapter_title("Sources")
+        try:
+            sources = json.loads(task.result_sources)
+            pdf.set_font("Helvetica", "", 9)
+            for i, src in enumerate(sources, 1):
+                if isinstance(src, dict):
+                    title = src.get('title', 'Source')
+                    url = src.get('url', '')
+                    pdf.set_text_color(33, 37, 41)
+                    pdf.cell(0, 5, f"[{i}] {title}", new_x="LMARGIN", new_y="NEXT")
+                    if url:
+                        pdf.set_text_color(66, 133, 244)
+                        pdf.cell(0, 5, f"    {url}", new_x="LMARGIN", new_y="NEXT")
+                else:
+                    pdf.set_text_color(33, 37, 41)
+                    pdf.cell(0, 5, f"[{i}] {src}", new_x="LMARGIN", new_y="NEXT")
+                pdf.ln(1)
+        except (json.JSONDecodeError, TypeError):
+            pdf.chapter_body(task.result_sources)
+
+    # Output
+    pdf_bytes = pdf.output()
+    import base64
+    return {
+        "content": base64.b64encode(pdf_bytes).decode("utf-8"),
+        "filename": f"research_{task_id[:8]}_{datetime.utcnow().strftime('%Y%m%d')}.pdf",
+        "content_type": "application/pdf",
+        "is_binary": True,
+    }
+
+
+def _export_research_docx(task, task_id: str) -> Dict:
+    """Export research report as DOCX."""
+    try:
+        from docx import Document as DocxDocument
+        from docx.shared import Inches, Pt, RGBColor
+        from docx.enum.text import WD_ALIGN_PARAGRAPH
+    except ImportError:
+        raise ValueError("DOCX export requires python-docx package")
+
+    doc = DocxDocument()
+
+    # Document title
+    title = doc.add_heading("Research Report", level=0)
+    title.alignment = WD_ALIGN_PARAGRAPH.CENTER
+
+    # Metadata table
+    table = doc.add_table(rows=4, cols=2)
+    table.style = 'Light Shading Accent 1'
+    cells = table.rows[0].cells
+    cells[0].text = "Query"
+    cells[1].text = task.query
+    cells = table.rows[1].cells
+    cells[0].text = "Strategy"
+    cells[1].text = task.strategy
+    cells = table.rows[2].cells
+    cells[0].text = "Created"
+    cells[1].text = task.created_at.strftime('%Y-%m-%d %H:%M') + " UTC"
+    cells = table.rows[3].cells
+    cells[0].text = "Status"
+    cells[1].text = task.status
+
+    doc.add_paragraph()
+
+    # Findings
+    if task.result_knowledge:
+        doc.add_heading("Key Findings", level=1)
+        for paragraph in task.result_knowledge.split('\n'):
+            p = paragraph.strip()
+            if p:
+                if p.startswith('- ') or p.startswith('* '):
+                    doc.add_paragraph(p[2:], style='List Bullet')
+                elif re.match(r'^\d+\.', p):
+                    doc.add_paragraph(re.sub(r'^\d+\.\s*', '', p), style='List Number')
+                else:
+                    doc.add_paragraph(p)
+
+    # Report
+    if task.result_report:
+        doc.add_heading("Detailed Report", level=1)
+        sections = re.split(r'\n##\s+', task.result_report)
+        for i, section in enumerate(sections):
+            if i == 0:
+                for para in section.split('\n'):
+                    p = para.strip()
+                    if p:
+                        _add_docx_paragraph(doc, p)
+            else:
+                lines = section.split('\n', 1)
+                doc.add_heading(lines[0].strip(), level=2)
+                if len(lines) > 1:
+                    for para in lines[1].split('\n'):
+                        p = para.strip()
+                        if p:
+                            _add_docx_paragraph(doc, p)
+
+    # Sources
+    if task.result_sources:
+        doc.add_heading("Sources", level=1)
+        try:
+            sources = json.loads(task.result_sources)
+            for i, src in enumerate(sources, 1):
+                if isinstance(src, dict):
+                    title_text = src.get('title', 'Source')
+                    url = src.get('url', '')
+                    p = doc.add_paragraph(style='List Number')
+                    run = p.add_run(title_text)
+                    run.bold = True
+                    if url:
+                        p.add_run(f"\n{url}").font.color.rgb = RGBColor(66, 133, 244)
+                else:
+                    doc.add_paragraph(str(src), style='List Number')
+        except (json.JSONDecodeError, TypeError):
+            doc.add_paragraph(task.result_sources)
+
+    # Save to buffer
+    buffer = io.BytesIO()
+    doc.save(buffer)
+
+    import base64
+    return {
+        "content": base64.b64encode(buffer.getvalue()).decode("utf-8"),
+        "filename": f"research_{task_id[:8]}_{datetime.utcnow().strftime('%Y%m%d')}.docx",
+        "content_type": "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+        "is_binary": True,
+    }
+
+
+def _clean_markdown_for_pdf(text: str) -> str:
+    """Remove markdown formatting for PDF rendering."""
+    text = re.sub(r'\*\*(.+?)\*\*', r'\1', text)  # bold
+    text = re.sub(r'\*(.+?)\*', r'\1', text)  # italic
+    text = re.sub(r'`(.+?)`', r'\1', text)  # code
+    text = re.sub(r'#{1,6}\s*', '', text)  # headings
+    text = re.sub(r'\[(.+?)\]\(.+?\)', r'\1', text)  # links
+    text = re.sub(r'!\[.*?\]\(.+?\)', '', text)  # images
+    return text.strip()
+
+
+def _add_docx_paragraph(doc, text: str):
+    """Add a paragraph to DOCX with basic markdown parsing."""
+    if text.startswith('- ') or text.startswith('* '):
+        doc.add_paragraph(text[2:], style='List Bullet')
+    elif re.match(r'^\d+\.', text):
+        doc.add_paragraph(re.sub(r'^\d+\.\s*', '', text), style='List Number')
+    elif text.startswith('### '):
+        doc.add_heading(text[4:], level=3)
+    elif text.startswith('> '):
+        p = doc.add_paragraph(text[2:])
+        p.style = 'Quote' if 'Quote' in [s.name for s in doc.styles] else 'Normal'
+    else:
+        doc.add_paragraph(text)
 
 
 def export_knowledge_graph(kg_engine, format: str = "json") -> Dict:

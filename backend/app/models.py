@@ -316,3 +316,58 @@ class ResearchSetting(Base):
     __table_args__ = (
         UniqueConstraint('user_id', 'key', name='uq_research_setting_user_key'),
     )
+
+
+# ==================== TOKEN USAGE TRACKING ====================
+
+class TokenUsage(Base):
+    __tablename__ = "token_usage"
+
+    id = Column(Integer, primary_key=True, index=True)
+    user_id = Column(Integer, ForeignKey("users.id"), nullable=False)
+    model = Column(String(100), nullable=False)
+    input_tokens = Column(Integer, default=0)
+    output_tokens = Column(Integer, default=0)
+    total_tokens = Column(Integer, default=0)
+    estimated_cost = Column(Float, default=0.0)
+    action = Column(String(50), default="chat")  # chat, research, report, query
+    resource_id = Column(String(100), nullable=True)
+    created_at = Column(DateTime, default=datetime.utcnow, index=True)
+
+    user = relationship("User")
+
+
+# ==================== SCHEDULED RESEARCH ====================
+
+class ScheduledResearch(Base):
+    __tablename__ = "scheduled_research"
+
+    id = Column(String(36), primary_key=True, default=generate_uuid)
+    user_id = Column(Integer, ForeignKey("users.id"), nullable=False)
+    name = Column(String(255), nullable=False)
+    query = Column(Text, nullable=False)
+    strategy = Column(String(50), default="source-based")
+    interval_hours = Column(Integer, default=24)
+    is_enabled = Column(Boolean, default=True)
+    last_run_at = Column(DateTime, nullable=True)
+    next_run_at = Column(DateTime, nullable=True)
+    run_count = Column(Integer, default=0)
+    last_task_id = Column(String(36), nullable=True)
+    created_at = Column(DateTime, default=datetime.utcnow)
+
+    user = relationship("User")
+
+
+# ==================== SEARCH METRICS ====================
+
+class SearchMetric(Base):
+    __tablename__ = "search_metrics"
+
+    id = Column(Integer, primary_key=True, index=True)
+    engine_name = Column(String(50), nullable=False)
+    query = Column(Text, nullable=False)
+    result_count = Column(Integer, default=0)
+    response_time_ms = Column(Integer, default=0)
+    success = Column(Boolean, default=True)
+    error_message = Column(Text, nullable=True)
+    created_at = Column(DateTime, default=datetime.utcnow, index=True)

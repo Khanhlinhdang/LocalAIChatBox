@@ -1,9 +1,10 @@
 """
-Deep Research Service - Wraps LDR's AdvancedSearchSystem and IntegratedReportGenerator
-for programmatic use within the ChatBox backend.
+Deep Research Service for LocalAIChatBox.
+Self-contained deep research engine - NO external LDR dependency required.
+Uses built-in AdvancedResearchEngine with multiple strategies,
+multi-engine search, and structured report generation.
 
-NOTE: Deep Research feature requires local-deep-research package.
-If not installed, the service will return error messages gracefully.
+Phase 5: Fully integrated research engine replacing LDR dependency.
 """
 import json
 import traceback
@@ -14,39 +15,23 @@ from typing import Dict, Optional
 from sqlalchemy.orm import Session
 from app.models import ResearchTask
 from app.ldr_settings import build_settings_snapshot
+from app.advanced_research import (
+    AdvancedResearchEngine, get_research_engine,
+    STRATEGIES, ResearchState,
+)
+from app.citation_handler import CitationHandler
 
-# Check if local-deep-research is available
-LDR_AVAILABLE = False
-LDR_ERROR = None
-
-try:
-    import local_deep_research
-    LDR_AVAILABLE = True
-except ImportError as e:
-    LDR_ERROR = f"local-deep-research package not installed: {str(e)}"
-    print(f"WARNING: {LDR_ERROR}")
-    print("Deep Research features will be disabled.")
-
-
-# Available research strategies
-STRATEGIES = [
-    {"id": "source-based", "name": "Source-Based", "description": "Comprehensive source tracking with citations (default)", "best_for": "General research"},
-    {"id": "rapid", "name": "Rapid", "description": "Speed-optimized single-pass search", "best_for": "Quick answers"},
-    {"id": "parallel", "name": "Parallel", "description": "Concurrent multi-query search", "best_for": "Thorough analysis"},
-    {"id": "standard", "name": "Standard", "description": "Balanced iterative search", "best_for": "General use"},
-    {"id": "iterative", "name": "Iterative", "description": "Loop-based persistent knowledge building", "best_for": "Complex topics"},
-    {"id": "focused-iteration", "name": "Focused Iteration", "description": "Adaptive refinement with focus", "best_for": "Deep analysis"},
-    {"id": "smart", "name": "Smart", "description": "Auto-selects best strategy for the query", "best_for": "Auto"},
-]
+# Re-export STRATEGIES for backward compatibility
+__all__ = ["DeepResearchService", "get_research_service", "STRATEGIES"]
 
 
 class DeepResearchService:
-    """Service for running deep research tasks using LDR."""
+    """Service for running deep research tasks using the built-in engine."""
 
     def __init__(self):
         self._active_tasks: Dict[str, dict] = {}
         self._executor = ThreadPoolExecutor(max_workers=3)
-        self._ldr_available = LDR_AVAILABLE
+        self._engine = get_research_engine()
 
     def start_research(self, query: str, strategy: str, user_id: int,
                        db: Session, overrides: Optional[Dict] = None) -> str:
@@ -66,20 +51,6 @@ class DeepResearchService:
 
         task_id = task.id
 
-        # Check if LDR is available
-        if not self._ldr_available:
-            task.status = "failed"
-            task.error_message = LDR_ERROR or "local-deep-research not available"
-            task.progress_message = "Deep Research feature is not installed"
-            db.commit()
-            
-            self._active_tasks[task_id] = {
-                "status": "failed",
-                "progress": 0.0,
-                "message": "Deep Research feature is not installed. Please install local-deep-research package."
-            }
-            return task_id
-
         # Track in memory
         self._active_tasks[task_id] = {
             "status": "pending",
@@ -91,11 +62,12 @@ class DeepResearchService:
         snapshot = build_settings_snapshot(db, overrides)
 
         # Submit to thread pool
-        self._executor.submit(self._run_research, task_id, query, strategy, snapshot)
+        self._executor.submit(self._run_research, task_id, query, strategy, snapshot, user_id)
 
         return task_id
 
-    def _run_research(self, task_id: str, query: str, strategy: str, snapshot: dict):
+    def _run_research(self, task_id: str, query: str, strategy: str,
+                      snapshot: dict, user_id: int):
         """Run the actual research in a background thread."""
         from app.database import SessionLocal
 
@@ -103,84 +75,27 @@ class DeepResearchService:
         try:
             # Update status to running
             self._update_task(db, task_id, status="running", progress=5.0,
-                              message="Loading AI models...")
+                              message="Initializing research engine...")
 
-            # Import LDR modules
-            from local_deep_research.config.llm_config import get_llm
-            from local_deep_research.config.search_config import get_search
-            from local_deep_research.search_system import AdvancedSearchSystem
+            # Progress callback
+            def on_progress(progress: float, message: str):
+                self._update_task(db, task_id, progress=progress, message=message)
 
-            # Create LLM instance
-            self._update_task(db, task_id, progress=10.0,
-                              message="Connecting to LLM...")
-
-            llm = get_llm(
-                provider=snapshot.get("llm.provider", "ollama"),
-                model_name=snapshot.get("llm.model", "llama3.1"),
-                temperature=snapshot.get("llm.temperature", 0.7),
-                settings_snapshot=snapshot
+            # Run research using built-in engine
+            state = self._engine.run_research(
+                query=query,
+                strategy=strategy,
+                settings=snapshot,
+                progress_callback=on_progress,
             )
-
-            # Create search engine
-            self._update_task(db, task_id, progress=15.0,
-                              message="Initializing search engine...")
-
-            search = get_search(
-                search_tool=snapshot.get("search.tool", "searxng"),
-                llm_instance=llm,
-                programmatic_mode=True,
-                settings_snapshot=snapshot
-            )
-
-            # Create search system
-            self._update_task(db, task_id, progress=20.0,
-                              message="Starting deep research...")
-
-            search_system = AdvancedSearchSystem(
-                llm=llm,
-                search=search,
-                strategy_name=strategy,
-                max_iterations=snapshot.get("search.iterations", 3),
-                questions_per_iteration=snapshot.get("search.questions_per_iteration", 3),
-                programmatic_mode=True,
-                settings_snapshot=snapshot
-            )
-
-            # Run research
-            self._update_task(db, task_id, progress=25.0,
-                              message=f"Researching: {query[:80]}...")
-
-            results = search_system.analyze_topic(query)
 
             # Process results
-            self._update_task(db, task_id, progress=85.0,
+            self._update_task(db, task_id, progress=90.0,
                               message="Processing research results...")
 
-            # Extract knowledge and sources from results
-            knowledge = ""
-            sources_list = []
-            metadata = {}
-
-            if isinstance(results, dict):
-                knowledge = results.get("knowledge", results.get("report", ""))
-                if not knowledge:
-                    # Try to extract from different result formats
-                    for key in ["findings", "summary", "content", "result"]:
-                        if key in results:
-                            knowledge = str(results[key])
-                            break
-                    if not knowledge:
-                        knowledge = json.dumps(results, indent=2, default=str)
-
-                sources_list = results.get("sources", [])
-                if isinstance(sources_list, dict):
-                    sources_list = [sources_list]
-
-                metadata = {
-                    k: v for k, v in results.items()
-                    if k not in ("knowledge", "report", "sources", "findings")
-                    and not isinstance(v, (bytes, type))
-                }
+            # Build citation handler
+            citation_handler = CitationHandler()
+            citation_handler.add_from_search_results(state.sources)
 
             # Save to database
             task = db.query(ResearchTask).filter(ResearchTask.id == task_id).first()
@@ -188,8 +103,23 @@ class DeepResearchService:
                 task.status = "completed"
                 task.progress = 100.0
                 task.progress_message = "Research completed"
-                task.result_knowledge = str(knowledge) if knowledge else ""
-                task.result_sources = json.dumps(sources_list, default=str)
+                task.result_knowledge = state.knowledge_summary or ""
+                task.result_sources = json.dumps(state.sources[:30], default=str)
+
+                # Build metadata
+                metadata = {
+                    "strategy": state.strategy,
+                    "iterations": state.iteration,
+                    "total_searches": state.total_searches,
+                    "total_findings": len(state.findings),
+                    "total_sources": len(state.sources),
+                    "sub_questions": state.sub_questions,
+                    "answered_questions": state.answered_questions,
+                    "duration_seconds": round(
+                        (datetime.utcnow() - datetime.utcfromtimestamp(state.start_time)).total_seconds()
+                    ) if state.start_time else 0,
+                    "citations": citation_handler.get_all_citations(),
+                }
                 task.result_metadata = json.dumps(metadata, default=str)
                 task.completed_at = datetime.utcnow()
                 db.commit()
@@ -199,6 +129,39 @@ class DeepResearchService:
                 "progress": 100.0,
                 "message": "Research completed"
             }
+
+            # Send notification
+            try:
+                from app.notification_service import get_notification_service
+                notifier = get_notification_service()
+                if notifier.available:
+                    from app.models import User
+                    user = db.query(User).filter(User.id == user_id).first()
+                    notifier.notify_research_complete(
+                        task_id=task_id,
+                        query=query,
+                        user_email=user.email if user else None,
+                        status="completed",
+                    )
+            except Exception:
+                pass
+
+            # Track token usage
+            try:
+                from app.token_tracker import get_token_tracker
+                tracker = get_token_tracker()
+                total_input = sum(len(f.content) for f in state.findings)
+                tracker.track_usage(
+                    db=db,
+                    user_id=user_id,
+                    model=snapshot.get("llm.model", "llama3.1"),
+                    input_text="x" * min(total_input // 4, 10000),
+                    output_text=state.knowledge_summary or "",
+                    action="research",
+                    resource_id=task_id,
+                )
+            except Exception:
+                pass
 
         except Exception as e:
             error_msg = f"{str(e)}\n{traceback.format_exc()}"
@@ -219,19 +182,22 @@ class DeepResearchService:
                 "progress": 0.0,
                 "message": f"Failed: {str(e)[:200]}"
             }
+
+            # Notify failure
+            try:
+                from app.notification_service import get_notification_service
+                notifier = get_notification_service()
+                if notifier.available:
+                    notifier.notify_research_complete(
+                        task_id=task_id, query=query, status="failed",
+                    )
+            except Exception:
+                pass
         finally:
             db.close()
 
     def generate_report(self, task_id: str, db: Session) -> Dict:
         """Generate a detailed report from research findings."""
-        # Check if LDR is available
-        if not self._ldr_available:
-            return {
-                "error": "Deep Research feature is not installed",
-                "message": LDR_ERROR or "local-deep-research package not available",
-                "task_id": task_id
-            }
-            
         task = db.query(ResearchTask).filter(ResearchTask.id == task_id).first()
         if not task:
             raise ValueError(f"Task {task_id} not found")
@@ -239,61 +205,34 @@ class DeepResearchService:
             raise ValueError(f"Task is not completed (status: {task.status})")
 
         try:
-            from local_deep_research.config.llm_config import get_llm
-            from local_deep_research.config.search_config import get_search
-            from local_deep_research.search_system import AdvancedSearchSystem
-            from local_deep_research.report_generator import IntegratedReportGenerator
-
             snapshot = build_settings_snapshot(db)
 
-            llm = get_llm(
-                provider=snapshot.get("llm.provider", "ollama"),
-                model_name=snapshot.get("llm.model", "llama3.1"),
-                temperature=snapshot.get("llm.temperature", 0.7),
-                settings_snapshot=snapshot
+            # Reconstruct research state
+            state = ResearchState(
+                query=task.query,
+                strategy=task.strategy or "source-based",
             )
+            state.knowledge_summary = task.result_knowledge or ""
 
-            search = get_search(
-                search_tool=snapshot.get("search.tool", "searxng"),
-                llm_instance=llm,
-                programmatic_mode=True,
-                settings_snapshot=snapshot
+            try:
+                state.sources = json.loads(task.result_sources) if task.result_sources else []
+            except (json.JSONDecodeError, TypeError):
+                state.sources = []
+
+            try:
+                metadata = json.loads(task.result_metadata) if task.result_metadata else {}
+                state.iteration = metadata.get("iterations", 1)
+                state.sub_questions = metadata.get("sub_questions", [])
+                state.total_searches = metadata.get("total_searches", 0)
+            except (json.JSONDecodeError, TypeError):
+                pass
+
+            # Generate report using built-in engine
+            report_content = self._engine.generate_report(
+                query=task.query,
+                state=state,
+                settings=snapshot,
             )
-
-            search_system = AdvancedSearchSystem(
-                llm=llm,
-                search=search,
-                strategy_name=task.strategy or "source-based",
-                programmatic_mode=True,
-                settings_snapshot=snapshot
-            )
-
-            report_gen = IntegratedReportGenerator(
-                searches_per_section=snapshot.get("report.searches_per_section", 2),
-                search_system=search_system,
-                llm=llm,
-                settings_snapshot=snapshot
-            )
-
-            # Build initial findings from stored results
-            initial_findings = {
-                "knowledge": task.result_knowledge or "",
-                "sources": json.loads(task.result_sources) if task.result_sources else []
-            }
-
-            report_result = report_gen.generate_report(
-                initial_findings=initial_findings,
-                query=task.query
-            )
-
-            # Extract report content
-            report_content = ""
-            if isinstance(report_result, dict):
-                report_content = report_result.get("content", report_result.get("report", ""))
-                if not report_content:
-                    report_content = json.dumps(report_result, indent=2, default=str)
-            else:
-                report_content = str(report_result)
 
             # Save report to task
             task.result_report = report_content
@@ -306,11 +245,9 @@ class DeepResearchService:
 
     def get_progress(self, task_id: str, db: Session) -> Dict:
         """Get the progress of a research task."""
-        # Check in-memory cache first (for active tasks)
         if task_id in self._active_tasks:
             return self._active_tasks[task_id]
 
-        # Fall back to database
         task = db.query(ResearchTask).filter(ResearchTask.id == task_id).first()
         if not task:
             return {"status": "not_found", "progress": 0, "message": "Task not found"}
@@ -358,7 +295,6 @@ class DeepResearchService:
             except Exception:
                 pass
 
-        # Always update in-memory
         if task_id not in self._active_tasks:
             self._active_tasks[task_id] = {}
         if status:

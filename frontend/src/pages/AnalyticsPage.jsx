@@ -1,7 +1,8 @@
 import React, { useState, useEffect } from 'react';
 import {
   getAnalyticsOverview, getAnalyticsDaily, getAnalyticsTopUsers,
-  getAnalyticsPopularQueries, getAnalyticsDocuments, getAnalyticsActions
+  getAnalyticsPopularQueries, getAnalyticsDocuments, getAnalyticsActions,
+  getTokenStats
 } from '../api';
 
 function AnalyticsPage({ user }) {
@@ -11,6 +12,7 @@ function AnalyticsPage({ user }) {
   const [popularQueries, setPopularQueries] = useState([]);
   const [documentStats, setDocumentStats] = useState(null);
   const [actions, setActions] = useState([]);
+  const [tokenStats, setTokenStats] = useState(null);
   const [days, setDays] = useState(30);
   const [loading, setLoading] = useState(true);
 
@@ -33,6 +35,12 @@ function AnalyticsPage({ user }) {
       setPopularQueries(pq.data.popular_queries || []);
       setDocumentStats(ds.data);
       setActions(ac.data.action_breakdown || []);
+
+      // Fetch token stats (non-blocking)
+      try {
+        const ts = await getTokenStats(days);
+        setTokenStats(ts.data);
+      } catch (e) { console.log('Token stats not available'); }
     } catch (err) {
       console.error('Failed to fetch analytics:', err);
     } finally {
@@ -180,6 +188,67 @@ function AnalyticsPage({ user }) {
           </div>
         </div>
       </div>
+
+      {/* Token Usage Section */}
+      {tokenStats && (
+        <div className="analytics-section" style={{ marginTop: 20 }}>
+          <h3>Token Usage & Costs</h3>
+          <div className="analytics-cards" style={{ marginBottom: 16 }}>
+            <div className="analytics-card">
+              <div className="analytics-card-value">{(tokenStats.total_tokens || 0).toLocaleString()}</div>
+              <div className="analytics-card-label">Total Tokens</div>
+            </div>
+            <div className="analytics-card">
+              <div className="analytics-card-value">${(tokenStats.estimated_cost || 0).toFixed(4)}</div>
+              <div className="analytics-card-label">Estimated Cost</div>
+            </div>
+            <div className="analytics-card">
+              <div className="analytics-card-value">{(tokenStats.total_input_tokens || 0).toLocaleString()}</div>
+              <div className="analytics-card-label">Input Tokens</div>
+            </div>
+            <div className="analytics-card">
+              <div className="analytics-card-value">{(tokenStats.total_output_tokens || 0).toLocaleString()}</div>
+              <div className="analytics-card-label">Output Tokens</div>
+            </div>
+          </div>
+
+          {tokenStats.by_model && tokenStats.by_model.length > 0 && (
+            <div style={{ marginBottom: 16 }}>
+              <h4>Usage by Model</h4>
+              <table className="analytics-table">
+                <thead><tr><th>Model</th><th>Tokens</th><th>Cost</th></tr></thead>
+                <tbody>
+                  {tokenStats.by_model.map((m, i) => (
+                    <tr key={i}>
+                      <td>{m.model}</td>
+                      <td><span className="count-badge">{(m.total_tokens || 0).toLocaleString()}</span></td>
+                      <td>${(m.estimated_cost || 0).toFixed(4)}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
+
+          {tokenStats.by_action && tokenStats.by_action.length > 0 && (
+            <div>
+              <h4>Usage by Action</h4>
+              <table className="analytics-table">
+                <thead><tr><th>Action</th><th>Tokens</th><th>Cost</th></tr></thead>
+                <tbody>
+                  {tokenStats.by_action.map((a, i) => (
+                    <tr key={i}>
+                      <td>{a.action}</td>
+                      <td><span className="count-badge">{(a.total_tokens || 0).toLocaleString()}</span></td>
+                      <td>${(a.estimated_cost || 0).toFixed(4)}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
+        </div>
+      )}
     </div>
   );
 }

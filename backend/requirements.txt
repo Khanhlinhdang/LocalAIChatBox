@@ -46,3 +46,6 @@ email-validator
 # Enterprise / Phase 4
 cryptography
 ldap3
+
+# Phase 5 - Advanced Research
+fpdf2

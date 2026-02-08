@@ -47,9 +47,18 @@ from fastapi.responses import Response
 
 app = FastAPI(
     title="LocalAIChatBox API",
-    version="3.0.0",
-    description="Multimodal RAG Chat System with Knowledge Graph & Deep Research"
+    version="5.0.0",
+    description="Multimodal RAG Chat System with Knowledge Graph, Deep Research & Advanced Search"
 )
+
+# Security middleware (must be added before CORS)
+try:
+    from app.security_middleware import SecurityHeadersMiddleware, RequestValidationMiddleware
+    app.add_middleware(RequestValidationMiddleware)
+    app.add_middleware(SecurityHeadersMiddleware)
+    print("Security middleware: ENABLED")
+except Exception as e:
+    print(f"Warning: Security middleware not loaded (non-fatal): {e}")
 
 app.add_middleware(
     CORSMiddleware,
@@ -132,9 +141,44 @@ async def startup_event():
     try:
         from app.deep_research import get_research_service
         get_research_service()
-        print("Deep Research Service initialized")
+        print("Deep Research Service initialized (self-contained engine)")
     except Exception as e:
         print(f"Warning: Deep Research Service init failed (non-fatal): {e}")
+
+    # Initialize multi-engine search
+    try:
+        from app.search_engines import get_meta_search_engine
+        meta = get_meta_search_engine()
+        available = [n for n, e in meta.engines.items() if e.available]
+        print(f"Multi-Engine Search initialized: {', '.join(available)}")
+    except Exception as e:
+        print(f"Warning: Multi-Engine Search init failed (non-fatal): {e}")
+
+    # Initialize notification service
+    try:
+        from app.notification_service import get_notification_service
+        notif = get_notification_service()
+        notif.start_worker()
+        caps = []
+        if notif.config.smtp_enabled:
+            caps.append("Email")
+        if notif.config.webhook_enabled:
+            caps.append("Webhook")
+        if caps:
+            print(f"Notification Service: ENABLED ({', '.join(caps)})")
+        else:
+            print("Notification Service: DISABLED (no channels configured)")
+    except Exception as e:
+        print(f"Warning: Notification Service init failed (non-fatal): {e}")
+
+    # Initialize research scheduler
+    try:
+        from app.research_scheduler import get_research_scheduler
+        scheduler = get_research_scheduler()
+        scheduler.start()
+        print("Research Scheduler: STARTED")
+    except Exception as e:
+        print(f"Warning: Research Scheduler init failed (non-fatal): {e}")
 
     # Initialize enhanced RAG engine
     try:
@@ -146,7 +190,7 @@ async def startup_event():
     except Exception as e:
         print(f"Warning: Enhanced RAG Engine init failed (non-fatal): {e}")
 
-    print("LocalAIChatBox Server Started (v4.0 - Enterprise Edition)")
+    print("LocalAIChatBox Server Started (v5.0 - Advanced Research Edition)")
 
 
 # ==================== SCHEMAS ====================

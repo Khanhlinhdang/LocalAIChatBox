@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
-import { startResearch, getResearchProgress, getResearchResult, generateReport, getResearchHistory, deleteResearch, getStrategies } from '../api';
+import { startResearch, getResearchProgress, getResearchResult, generateReport, getResearchHistory, deleteResearch, getStrategies, exportResearchAs } from '../api';
 
 function DeepResearchPage({ user }) {
   const [query, setQuery] = useState('');
@@ -12,12 +12,17 @@ function DeepResearchPage({ user }) {
   const [report, setReport] = useState(null);
   const [loading, setLoading] = useState(false);
   const [generating, setGenerating] = useState(false);
+  const [exporting, setExporting] = useState(false);
   const pollingRef = useRef(null);
+  const sseRef = useRef(null);
 
   useEffect(() => {
     fetchStrategies();
     fetchHistory();
-    return () => { if (pollingRef.current) clearInterval(pollingRef.current); };
+    return () => {
+      if (pollingRef.current) clearInterval(pollingRef.current);
+      if (sseRef.current) { sseRef.current.close(); sseRef.current = null; }
+    };
   }, []);
 
   const fetchStrategies = async () => {
@@ -39,6 +44,51 @@ function DeepResearchPage({ user }) {
   };
 
   const startPolling = useCallback((taskId) => {
+    // Clean up existing connections
+    if (pollingRef.current) clearInterval(pollingRef.current);
+    if (sseRef.current) { sseRef.current.close(); sseRef.current = null; }
+
+    // Try SSE first, fall back to polling
+    try {
+      const token = localStorage.getItem('token');
+      const baseUrl = process.env.REACT_APP_API_URL || '/api';
+      const evtSource = new EventSource(`${baseUrl}/research/${taskId}/stream?token=${token}`);
+      sseRef.current = evtSource;
+
+      evtSource.onmessage = async (event) => {
+        try {
+          const data = JSON.parse(event.data);
+          setProgress(data);
+
+          if (data.done || data.status === 'completed' || data.status === 'failed' || data.status === 'cancelled') {
+            evtSource.close();
+            sseRef.current = null;
+
+            if (data.status === 'completed') {
+              const resultRes = await getResearchResult(taskId);
+              setResult(resultRes.data);
+            }
+            fetchHistory();
+          }
+        } catch (e) {
+          console.error('SSE parse error:', e);
+        }
+      };
+
+      evtSource.onerror = () => {
+        // SSE failed, fall back to polling
+        evtSource.close();
+        sseRef.current = null;
+        console.log('SSE unavailable, falling back to polling');
+        startFallbackPolling(taskId);
+      };
+    } catch (e) {
+      // SSE not supported, use polling
+      startFallbackPolling(taskId);
+    }
+  }, []);
+
+  const startFallbackPolling = useCallback((taskId) => {
     if (pollingRef.current) clearInterval(pollingRef.current);
 
     pollingRef.current = setInterval(async () => {
@@ -99,6 +149,7 @@ function DeepResearchPage({ user }) {
 
   const handleSelectTask = async (task) => {
     if (pollingRef.current) clearInterval(pollingRef.current);
+    if (sseRef.current) { sseRef.current.close(); sseRef.current = null; }
     setActiveTask(task.id);
     setReport(null);
 
@@ -146,6 +197,29 @@ function DeepResearchPage({ user }) {
       case 'pending': return 'var(--warning, #f0ad4e)';
       case 'failed': return 'var(--danger)';
       default: return 'var(--text-secondary)';
+    }
+  };
+
+  const handleExport = async (format) => {
+    if (!activeTask) return;
+    setExporting(true);
+    try {
+      const res = await exportResearchAs(activeTask, format);
+      const blob = new Blob([res.data], { type: res.headers['content-type'] });
+      const url = window.URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      const contentDisp = res.headers['content-disposition'];
+      const filename = contentDisp ? contentDisp.split('filename=')[1]?.replace(/"/g, '') : `research.${format}`;
+      a.download = filename;
+      document.body.appendChild(a);
+      a.click();
+      window.URL.revokeObjectURL(url);
+      document.body.removeChild(a);
+    } catch (err) {
+      alert(err.response?.data?.detail || `Failed to export as ${format}`);
+    } finally {
+      setExporting(false);
     }
   };
 
@@ -257,6 +331,20 @@ function DeepResearchPage({ user }) {
                       {generating ? 'Generating Report...' : 'Generate Report'}
                     </button>
                   )}
+                  <div className="export-buttons">
+                    <button className="btn btn-outline" onClick={() => handleExport('markdown')} disabled={exporting} title="Export as Markdown">
+                      📄 MD
+                    </button>
+                    <button className="btn btn-outline" onClick={() => handleExport('pdf')} disabled={exporting} title="Export as PDF">
+                      📕 PDF
+                    </button>
+                    <button className="btn btn-outline" onClick={() => handleExport('docx')} disabled={exporting} title="Export as Word">
+                      📘 DOCX
+                    </button>
+                    <button className="btn btn-outline" onClick={() => handleExport('json')} disabled={exporting} title="Export as JSON">
+                      📦 JSON
+                    </button>
+                  </div>
                 </div>
               </div>
 
@@ -289,7 +377,23 @@ function DeepResearchPage({ user }) {
                   <div className="sources-list">
                     {result.sources.map((source, i) => (
                       <div key={i} className="source-item">
-                        {typeof source === 'string' ? source : JSON.stringify(source)}
+                        {typeof source === 'object' ? (
+                          <>
+                            <span className="source-number">[{i + 1}]</span>
+                            <div className="source-details">
+                              <div className="source-title">{source.title || 'Source'}</div>
+                              {source.url && (
+                                <a href={source.url} target="_blank" rel="noopener noreferrer" className="source-url">
+                                  {source.url}
+                                </a>
+                              )}
+                              {source.snippet && <div className="source-snippet">{source.snippet}</div>}
+                              {source.source && <span className="source-engine">{source.source}</span>}
+                            </div>
+                          </>
+                        ) : (
+                          <span>{source}</span>
+                        )}
                       </div>
                     ))}
                   </div>

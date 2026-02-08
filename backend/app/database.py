@@ -58,9 +58,13 @@ def run_migrations():
         if "folders" in existing_tables:
             _safe_add_column(conn, "folders", "tenant_id", "INTEGER")
 
+        # Phase 5: Add research metadata columns
+        if "research_tasks" in existing_tables:
+            _safe_add_column(conn, "research_tasks", "result_metadata", "TEXT")
+
         conn.commit()
-        logger.info("Database migration completed")
-        print("Database migration completed")
+        logger.info("Database migration completed (Phase 5)")
+        print("Database migration completed (Phase 5)")
 
 
 def init_db():
